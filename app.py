@@ -5,6 +5,7 @@ Pulls real reviews, AI-generated responses, and configs from BigQuery.
 Run:  streamlit run reengage_ops_dashboard.py --server.port 8520
 """
 
+import json
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -12,7 +13,6 @@ import pandas as pd
 import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials as UserCredentials
 
 # ── Config ────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="ReEngage Ops Dashboard", page_icon="📬", layout="wide")
@@ -34,24 +34,15 @@ RATING_OPTIONS_UE = ["1", "2", "3", "4", "5"]
 # ── BigQuery client (cached) ─────────────────────────────────────────────────
 @st.cache_resource
 def bq_client():
-    # Streamlit Cloud: use secrets (authorized_user or service_account); Local: ADC
-    try:
-        info = dict(st.secrets["gcp_credentials"])
-        if info.get("type") == "authorized_user":
-            creds = UserCredentials(
-                token=None,
-                refresh_token=info["refresh_token"],
-                client_id=info["client_id"],
-                client_secret=info["client_secret"],
-                token_uri="https://oauth2.googleapis.com/token",
-            )
-        else:
-            creds = service_account.Credentials.from_service_account_info(
-                info, scopes=["https://www.googleapis.com/auth/bigquery"],
-            )
+    # Streamlit Cloud: use service account from secrets
+    if "gcp_service_account" in st.secrets:
+        creds = service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=["https://www.googleapis.com/auth/bigquery"],
+        )
         return bigquery.Client(project=PROJECT, credentials=creds)
-    except (KeyError, FileNotFoundError):
-        return bigquery.Client(project=PROJECT)
+    # Local: use ADC
+    return bigquery.Client(project=PROJECT)
 
 
 def bq_read(sql: str) -> pd.DataFrame:
@@ -125,21 +116,23 @@ def load_reviews() -> pd.DataFrame:
         SELECT
             w.*,
             rr.response_text AS ai_response,
-            rr.response_type,
+            rr.response_type AS rr_response_type,
             rr.coupon_value,
             rr.response_sent,
             rr.config_id
         FROM with_days w
-        INNER JOIN `pg_cdc_public.review_responses` rr ON w.order_id = rr.order_id
+        LEFT JOIN `pg_cdc_public.review_responses` rr ON w.order_id = rr.order_id
     ),
 
     with_status AS (
         SELECT *,
             CASE
-                WHEN is_replied = TRUE OR response_sent IS NOT NULL THEN 'RESPONDED'
+                WHEN is_replied = TRUE THEN 'RESPONDED'
+                WHEN response_sent IS NOT NULL THEN 'RESPONDED'
                 WHEN days_left <= 0 THEN 'EXPIRED'
                 ELSE 'PENDING'
             END AS status,
+            -- replied_comment = Loop already posted this; ai_response = generated but not yet posted
             COALESCE(replied_comment, ai_response) AS response_text,
             CASE
                 WHEN days_left <= 1 THEN 'CRITICAL'
@@ -168,8 +161,9 @@ def load_reviews() -> pd.DataFrame:
         review_uid, order_id, review_id, chain_name, platform, slug, store_id,
         customer_name, customer_type, CAST(star_rating AS STRING) AS star_rating,
         rating_numeric, rating_display, review_text, review_date, days_left,
-        portal_link, response_text, response_type, coupon_value,
-        CAST(config_id AS STRING) AS config_id, status, priority
+        portal_link, response_text, rr_response_type AS response_type, coupon_value,
+        CAST(config_id AS STRING) AS config_id, status, priority,
+        is_replied
     FROM with_status
     ORDER BY
         CASE priority WHEN 'CRITICAL' THEN 1 WHEN 'URGENT' THEN 2 ELSE 3 END,
@@ -284,7 +278,8 @@ statuses  = sorted(df_all["status"].unique().tolist())     if not df_all.empty e
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.title("📬 ReEngage Ops Dashboard")
-st.caption(f"Live data · {len(df_all):,} reviews with AI response ready · {len(rc_df)} configs · last 14 days")
+auto_count = int(df_all["is_replied"].sum()) if not df_all.empty and "is_replied" in df_all.columns else 0
+st.caption(f"Live data · {len(df_all):,} reviews · {auto_count:,} auto-posted by Loop · {len(rc_df)} configs · last 14 days")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -298,12 +293,13 @@ with st.sidebar:
         critical_count = int(((df_all["priority"] == "CRITICAL") & (df_all["status"] == "PENDING")).sum())
         responded      = int((df_all["status"] == "RESPONDED").sum())
         has_response   = int(df_all["response_text"].notna().sum())
+        auto_posted = int(df_all["is_replied"].sum()) if "is_replied" in df_all.columns else 0
         st.metric("Total reviews", f"{len(df_all):,}")
         st.metric("Pending", f"{pending_count:,}")
         st.metric("🔴 Critical & pending", critical_count)
         st.metric("✅ Responded", f"{responded:,}")
-        st.metric("🤖 AI responses ready", f"{has_response:,}")
-        st.metric("UE auto-posts (session)", len(st.session_state.post_log))
+        st.metric("🤖 Auto-posted by Loop", f"{auto_posted:,}")
+        st.metric("📝 Has response text", f"{has_response:,}")
 
     st.divider()
     if st.button("🔄 Refresh data"):
@@ -381,14 +377,18 @@ with tab_q:
                         else:
                             st.caption("_No review text_")
 
-                    # ── Mid: AI-generated response ──
+                    # ── Mid: Response text ──
                     with mid:
                         resp = r.get("response_text") or ""
-                        st.caption(f"AI response · Type: `{r.get('response_type', '—')}`")
-                        if resp:
+                        already_posted = r.get("is_replied", False)
+                        if already_posted and resp:
+                            st.caption("✅ Already posted by Loop")
+                            st.success(resp)
+                        elif resp:
+                            st.caption(f"🤖 AI response ready · Type: `{r.get('response_type', '—')}`")
                             st.info(resp)
                         else:
-                            st.warning("_No AI response generated — check if config matches this review_")
+                            st.warning("_No response generated — config may not match this review_")
                         if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0:
                             st.markdown(f"💰 Coupon: **${r['coupon_value']:.2f}**")
                         if r.get("config_id"):
