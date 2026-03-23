@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as UserCredentials
 
 # ── Config ────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="ReEngage Ops Dashboard", page_icon="📬", layout="wide")
@@ -33,12 +34,21 @@ RATING_OPTIONS_UE = ["1", "2", "3", "4", "5"]
 # ── BigQuery client (cached) ─────────────────────────────────────────────────
 @st.cache_resource
 def bq_client():
-    # Streamlit Cloud: use secrets; Local: fall back to ADC
+    # Streamlit Cloud: use secrets (authorized_user or service_account); Local: ADC
     try:
-        creds = service_account.Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"],
-            scopes=["https://www.googleapis.com/auth/bigquery"],
-        )
+        info = dict(st.secrets["gcp_credentials"])
+        if info.get("type") == "authorized_user":
+            creds = UserCredentials(
+                token=None,
+                refresh_token=info["refresh_token"],
+                client_id=info["client_id"],
+                client_secret=info["client_secret"],
+                token_uri="https://oauth2.googleapis.com/token",
+            )
+        else:
+            creds = service_account.Credentials.from_service_account_info(
+                info, scopes=["https://www.googleapis.com/auth/bigquery"],
+            )
         return bigquery.Client(project=PROJECT, credentials=creds)
     except (KeyError, FileNotFoundError):
         return bigquery.Client(project=PROJECT)
