@@ -13,6 +13,8 @@ import pandas as pd
 import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from google.auth.transport.requests import Request as AuthRequest
+from google.oauth2.credentials import Credentials as OAuthCredentials
 
 # ── Config ────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="ReEngage Ops Dashboard", page_icon="📬", layout="wide")
@@ -34,12 +36,24 @@ RATING_OPTIONS_UE = ["1", "2", "3", "4", "5"]
 # ── BigQuery client (cached) ─────────────────────────────────────────────────
 @st.cache_resource
 def bq_client():
-    # Streamlit Cloud: use service account from secrets
+    # Streamlit Cloud: service account key
     if "gcp_service_account" in st.secrets:
         creds = service_account.Credentials.from_service_account_info(
             st.secrets["gcp_service_account"],
             scopes=["https://www.googleapis.com/auth/bigquery"],
         )
+        return bigquery.Client(project=PROJECT, credentials=creds)
+    # Streamlit Cloud: authorized_user OAuth (same as recovery dashboard)
+    if "gcp_credentials" in st.secrets:
+        info = dict(st.secrets["gcp_credentials"])
+        creds = OAuthCredentials(
+            token=None,
+            refresh_token=info["refresh_token"],
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=info["client_id"],
+            client_secret=info["client_secret"],
+        )
+        creds.refresh(AuthRequest())
         return bigquery.Client(project=PROJECT, credentials=creds)
     # Local: use ADC
     return bigquery.Client(project=PROJECT)
