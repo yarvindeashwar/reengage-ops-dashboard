@@ -1,0 +1,30 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'reengage-ops-dashboard'
+      - '--image=us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--memory=2048Mi'
+      - '--min-instances=0'
+      - '--max-instances=3'
+      - '--timeout=3600'
+      - '--allow-unauthenticated'
+
+images:
+  - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'

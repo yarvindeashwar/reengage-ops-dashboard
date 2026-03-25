@@ -2,5 +2,7 @@ streamlit>=1.30.0
 pandas
 google-cloud-bigquery
 google-auth
+google-auth-oauthlib
+requests
 db-dtypes
 pyarrow
