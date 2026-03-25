@@ -68,15 +68,20 @@ def insert_assignments(rows: list[dict]):
 
 
 def redistribute_assignments(removed_email: str):
-    """Reassign a removed operator's pending reviews equally to remaining operators."""
+    """
+    Reassign a removed operator's pending reviews to remaining operators.
+    Minimises chain×platform switches — prefers operators who already
+    handle the same (chain, platform) combo so they don't need extra logins.
+    """
+    from collections import defaultdict
     from config import ROLE_LEAD
 
     conn = get_conn()
 
-    # Get the removed operator's pending assignments
     orphaned = conn.execute(
         "SELECT assignment_id, review_uid, order_id, chain_name, platform, days_left "
-        "FROM assignments WHERE operator_email = ? AND status = 'pending'",
+        "FROM assignments WHERE operator_email = ? AND status = 'pending' "
+        "ORDER BY days_left ASC",
         (removed_email,),
     ).fetchall()
 
@@ -84,7 +89,6 @@ def redistribute_assignments(removed_email: str):
         conn.close()
         return
 
-    # Get remaining approved non-lead operators
     remaining = conn.execute(
         "SELECT email FROM users WHERE approved = 1 AND role != ? AND email != ?",
         (ROLE_LEAD, removed_email),
@@ -95,25 +99,63 @@ def redistribute_assignments(removed_email: str):
         return
 
     operators = [r["email"] for r in remaining]
+
+    # Build map: which (chain, platform) combos each operator already handles
+    existing = conn.execute(
+        "SELECT operator_email, chain_name, platform "
+        "FROM assignments WHERE status = 'pending' AND operator_email != ?",
+        (removed_email,),
+    ).fetchall()
+
+    op_combos = defaultdict(set)     # email -> set of (chain, platform)
+    op_counts = defaultdict(int)     # email -> current pending count
+    for row in existing:
+        op_combos[row["operator_email"]].add((row["chain_name"], row["platform"]))
+        op_counts[row["operator_email"]] += 1
+
+    # Ensure all operators are in the maps even if they have 0 assignments
+    for op in operators:
+        op_combos.setdefault(op, set())
+        op_counts.setdefault(op, 0)
+
+    # Group orphaned reviews by (chain, platform)
+    groups = defaultdict(list)
+    for row in orphaned:
+        groups[(row["chain_name"], row["platform"])].append(row)
+
     now = _now()
 
-    # Distribute round-robin
-    for i, row in enumerate(orphaned):
-        new_operator = operators[i % len(operators)]
-        conn.execute(
-            "UPDATE assignments SET operator_email = ?, assigned_at = ? "
-            "WHERE assignment_id = ?",
-            (new_operator, now, row["assignment_id"]),
-        )
+    for (chain, plat), reviews in groups.items():
+        # Prefer operators who already have this combo (no extra login)
+        # Break ties by fewest total assignments (balance load)
+        has_combo = [op for op in operators if (chain, plat) in op_combos[op]]
+        no_combo = [op for op in operators if (chain, plat) not in op_combos[op]]
+
+        # Sort each group by current count ascending (least loaded first)
+        has_combo.sort(key=lambda op: op_counts[op])
+        no_combo.sort(key=lambda op: (len(op_combos[op]), op_counts[op]))
+
+        # Prioritise operators who already have the combo, then others
+        preferred = has_combo + no_combo
+
+        for i, row in enumerate(reviews):
+            target = preferred[i % len(preferred)]
+            conn.execute(
+                "UPDATE assignments SET operator_email = ?, assigned_at = ? "
+                "WHERE assignment_id = ?",
+                (target, now, row["assignment_id"]),
+            )
+            op_counts[target] += 1
+            op_combos[target].add((chain, plat))
 
     conn.commit()
     conn.close()
 
-    # Log the redistribution
     log_action(
         review_uid="batch", platform="all", chain_name="all",
         action="redistribute",
         operator_email=removed_email,
         performed_by="system",
-        remarks=f"Redistributed {len(orphaned)} reviews from {removed_email} to {len(operators)} operators",
+        remarks=f"Redistributed {len(orphaned)} reviews from {removed_email} "
+                f"to {len(operators)} operators (login-optimised)",
     )
