@@ -29,6 +29,22 @@ def _post_reply_ubereats(review_id: str, comment: str, promotion: str) -> dict:
     return {"ok": resp.ok, "status": resp.status_code, "body": resp.text}
 
 
+def _save_reply_doordash(review_id: str, comment: str, promotion: int) -> dict:
+    """Call the backend /actions/review/reply endpoint for DoorDash.
+    Saves to review_reply_internal with sent=False. Does NOT post to DD."""
+    resp = requests.post(
+        f"{BACKEND_URL}/actions/review/reply",
+        params={"reviewId": review_id},
+        json={
+            "platform": "doordash",
+            "comment": comment[:300],  # DD limit 300 chars
+            "promotion": promotion,
+        },
+        timeout=30,
+    )
+    return {"ok": resp.ok, "status": resp.status_code, "body": resp.text}
+
+
 def render(df_all, user_email):
     if not user_email:
         st.info("Not logged in.")
@@ -176,20 +192,35 @@ def render(df_all, user_email):
     elif edited_resp != resp:
         st.caption("✏️ Response modified from AI original")
 
-    # ── Action buttons ──
+    # ── Platform-specific options ──
+    coupon_default = int(r["coupon_value"]) if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0 else 0
+
     if r["platform"] == "UberEats":
-        # Tier picker + auto-post
         t1, t2 = st.columns([1, 1])
         with t1:
             tier = st.selectbox("Promotion tier", UE_TIERS, key=f"tier_{uid}",
                                 help="UberEats decides the dollar amount per tier. "
                                      "NONE = no promo, TIER_1/2/3 = increasing value.")
         with t2:
-            if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0:
-                st.caption(f"💡 Config suggests **${r['coupon_value']:.2f}** coupon")
+            if coupon_default > 0:
+                st.caption(f"💡 Config suggests **${coupon_default}** coupon")
             else:
                 st.caption("Config: no coupon configured")
+    else:
+        t1, t2 = st.columns([1, 1])
+        with t1:
+            dd_promo = st.number_input("Coupon $ amount", min_value=0, value=coupon_default,
+                                       step=1, key=f"ddpromo_{uid}",
+                                       help="Dollar amount for DoorDash promotion (0 = none)")
+        with t2:
+            if coupon_default > 0:
+                st.caption(f"💡 Config suggests **${coupon_default}** coupon")
+            else:
+                st.caption("Config: no coupon configured")
+        if edited_resp and len(edited_resp) > 300:
+            st.warning(f"⚠️ DoorDash limit is 300 chars. Current: {len(edited_resp)} chars.")
 
+    # ── Action buttons ──
     b1, b2, b3 = st.columns([2, 2, 3])
 
     with b1:
@@ -215,6 +246,24 @@ def render(df_all, user_email):
                     st.rerun()
                 else:
                     st.error(f"Failed to post (HTTP {result['status']}): {result['body'][:200]}")
+
+        elif r["platform"] == "Doordash" and edited_resp:
+            if st.button("💾 Save & Open DD Portal", key=f"dd_{uid}",
+                         type="primary", use_container_width=True):
+                with st.spinner("Saving reply..."):
+                    review_id = r.get("review_id") or r.get("order_id") or uid
+                    result = _save_reply_doordash(review_id, edited_resp, dd_promo)
+
+                if result["ok"]:
+                    log_action(uid, "Doordash", r["chain_name"],
+                               "save_dd_reply", user_email, user_email,
+                               f"Saved DD reply, promo=${dd_promo}")
+                    st.success("✅ Reply saved! Now paste it in the DD portal.")
+                    if r.get("portal_link"):
+                        st.link_button("📋 Open DD Portal & Paste",
+                                       r["portal_link"], use_container_width=True)
+                else:
+                    st.error(f"Failed to save (HTTP {result['status']}): {result['body'][:200]}")
 
     with b2:
         if st.button("✅ Mark responded", key=f"b_{uid}", use_container_width=True):
