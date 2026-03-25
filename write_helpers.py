@@ -65,3 +65,55 @@ def insert_assignments(rows: list[dict]):
     ])
     conn.commit()
     conn.close()
+
+
+def redistribute_assignments(removed_email: str):
+    """Reassign a removed operator's pending reviews equally to remaining operators."""
+    from config import ROLE_LEAD
+
+    conn = get_conn()
+
+    # Get the removed operator's pending assignments
+    orphaned = conn.execute(
+        "SELECT assignment_id, review_uid, order_id, chain_name, platform, days_left "
+        "FROM assignments WHERE operator_email = ? AND status = 'pending'",
+        (removed_email,),
+    ).fetchall()
+
+    if not orphaned:
+        conn.close()
+        return
+
+    # Get remaining approved non-lead operators
+    remaining = conn.execute(
+        "SELECT email FROM users WHERE approved = 1 AND role != ? AND email != ?",
+        (ROLE_LEAD, removed_email),
+    ).fetchall()
+
+    if not remaining:
+        conn.close()
+        return
+
+    operators = [r["email"] for r in remaining]
+    now = _now()
+
+    # Distribute round-robin
+    for i, row in enumerate(orphaned):
+        new_operator = operators[i % len(operators)]
+        conn.execute(
+            "UPDATE assignments SET operator_email = ?, assigned_at = ? "
+            "WHERE assignment_id = ?",
+            (new_operator, now, row["assignment_id"]),
+        )
+
+    conn.commit()
+    conn.close()
+
+    # Log the redistribution
+    log_action(
+        review_uid="batch", platform="all", chain_name="all",
+        action="redistribute",
+        operator_email=removed_email,
+        performed_by="system",
+        remarks=f"Redistributed {len(orphaned)} reviews from {removed_email} to {len(operators)} operators",
+    )

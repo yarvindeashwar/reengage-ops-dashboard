@@ -111,7 +111,7 @@ def render(df_all, user_email):
     asgn_id = r.get("assignment_id", "")
     resp = r.get("response_text") or ""
 
-    # ── Detail panel (compact: 2 columns) ──
+    # ── Detail panel ──
     col_detail, col_action = st.columns([3, 2])
 
     with col_detail:
@@ -124,13 +124,8 @@ def render(df_all, user_email):
         else:
             st.caption("_No review text_")
 
-        if resp:
-            st.markdown("**AI Response:**")
-            st.code(resp, language=None)
-            if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0:
-                st.markdown(f"💰 Coupon: **${r['coupon_value']:.2f}**")
-        else:
-            st.warning("No AI response generated for this review.")
+        if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0:
+            st.markdown(f"💰 Coupon: **${r['coupon_value']:.2f}**")
 
     with col_action:
         if r["status"] != "PENDING":
@@ -139,36 +134,60 @@ def render(df_all, user_email):
 
         if r["platform"] == "UberEats":
             st.caption("🟢 UberEats — Auto-post available")
-            if resp:
-                if st.button("🚀 Auto-post to UberEats", key=f"ue_{uid}",
-                             type="primary", use_container_width=True):
-                    st.session_state.post_log.append({
-                        "review_uid": uid, "response": resp[:100],
-                        "posted_at": datetime.now().isoformat()
-                    })
-                    log_action(uid, "UberEats", r["chain_name"],
-                               "auto_post", user_email, user_email,
-                               "Auto-posted via UE API")
-                    if asgn_id:
-                        mark_assignment_completed(asgn_id, user_email)
-                    st.success("✅ Posted!")
-                    st.cache_data.clear()
-                    st.rerun()
         else:
             st.caption("🟡 DoorDash — Copy & paste")
             if r.get("portal_link"):
                 st.link_button("📋 Open DD Portal",
                                r["portal_link"], use_container_width=True)
 
-        st.divider()
-        rem = st.text_input("Remarks", key=f"r_{uid}", placeholder="optional")
-        if st.button("✅ Mark responded", key=f"b_{uid}",
-                     use_container_width=True, type="primary" if not resp else "secondary"):
+    # ── Response editor (full width below detail) ──
+    st.markdown("---")
+    st.markdown("**Response to post:**")
+    edited_resp = st.text_area(
+        "Edit or write your response",
+        value=resp,
+        height=120,
+        key=f"resp_{uid}",
+        placeholder="No AI response available — write your own response here...",
+        label_visibility="collapsed",
+    )
+
+    if not resp and not edited_resp:
+        st.caption("💡 No AI response was generated. Write a custom response above.")
+    elif edited_resp != resp:
+        st.caption("✏️ Response modified from AI original")
+
+    # ── Action buttons (single row) ──
+    b1, b2, b3 = st.columns([2, 2, 3])
+
+    with b1:
+        if r["platform"] == "UberEats" and edited_resp:
+            if st.button("🚀 Auto-post to UberEats", key=f"ue_{uid}",
+                         type="primary", use_container_width=True):
+                st.session_state.post_log.append({
+                    "review_uid": uid, "response": edited_resp[:100],
+                    "posted_at": datetime.now().isoformat()
+                })
+                log_action(uid, "UberEats", r["chain_name"],
+                           "auto_post", user_email, user_email,
+                           "Auto-posted via UE API")
+                if asgn_id:
+                    mark_assignment_completed(asgn_id, user_email)
+                st.success("✅ Posted!")
+                st.cache_data.clear()
+                st.rerun()
+
+    with b2:
+        if st.button("✅ Mark responded", key=f"b_{uid}", use_container_width=True):
             method = "auto_ue" if r["platform"] == "UberEats" else "manual_dd"
             log_action(uid, r["platform"], r["chain_name"],
-                       "mark_responded", user_email, user_email, rem or method)
+                       "mark_responded", user_email, user_email,
+                       f"custom_response" if edited_resp != resp else method)
             if asgn_id:
                 mark_assignment_completed(asgn_id, user_email)
             st.success("Done!")
             st.cache_data.clear()
             st.rerun()
+
+    with b3:
+        rem = st.text_input("Remarks", key=f"r_{uid}", placeholder="optional")

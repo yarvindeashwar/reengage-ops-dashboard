@@ -243,6 +243,8 @@ def update_user_approval(email: str, approved: bool):
 
 
 def remove_user(email: str):
+    from write_helpers import redistribute_assignments
+    redistribute_assignments(email)
     conn = get_conn()
     conn.execute("DELETE FROM users WHERE email = ?", (email,))
     conn.commit()
