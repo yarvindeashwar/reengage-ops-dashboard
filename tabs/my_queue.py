@@ -3,11 +3,30 @@
 from datetime import datetime
 
 import pandas as pd
+import requests
 import streamlit as st
 
 from config import PRIORITY_ICON, STATUS_ICON
 from data_loaders import load_my_assignments
 from write_helpers import log_action, mark_assignment_completed
+
+BACKEND_URL = "https://api.loopapplication.xyz"
+UE_TIERS = ["NONE", "TIER_1", "TIER_2", "TIER_3"]
+
+
+def _post_reply_ubereats(review_id: str, comment: str, promotion: str) -> dict:
+    """Call the backend /actions/review/reply endpoint for UberEats."""
+    resp = requests.post(
+        f"{BACKEND_URL}/actions/review/reply",
+        params={"reviewId": review_id},
+        json={
+            "platform": "uber_eats",
+            "comment": comment,
+            "promotion": promotion,
+        },
+        timeout=30,
+    )
+    return {"ok": resp.ok, "status": resp.status_code, "body": resp.text}
 
 
 def render(df_all, user_email):
@@ -157,25 +176,45 @@ def render(df_all, user_email):
     elif edited_resp != resp:
         st.caption("✏️ Response modified from AI original")
 
-    # ── Action buttons (single row) ──
+    # ── Action buttons ──
+    if r["platform"] == "UberEats":
+        # Tier picker + auto-post
+        t1, t2 = st.columns([1, 1])
+        with t1:
+            tier = st.selectbox("Promotion tier", UE_TIERS, key=f"tier_{uid}",
+                                help="UberEats decides the dollar amount per tier. "
+                                     "NONE = no promo, TIER_1/2/3 = increasing value.")
+        with t2:
+            if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0:
+                st.caption(f"💡 Config suggests **${r['coupon_value']:.2f}** coupon")
+            else:
+                st.caption("Config: no coupon configured")
+
     b1, b2, b3 = st.columns([2, 2, 3])
 
     with b1:
         if r["platform"] == "UberEats" and edited_resp:
             if st.button("🚀 Auto-post to UberEats", key=f"ue_{uid}",
                          type="primary", use_container_width=True):
-                st.session_state.post_log.append({
-                    "review_uid": uid, "response": edited_resp[:100],
-                    "posted_at": datetime.now().isoformat()
-                })
-                log_action(uid, "UberEats", r["chain_name"],
-                           "auto_post", user_email, user_email,
-                           "Auto-posted via UE API")
-                if asgn_id:
-                    mark_assignment_completed(asgn_id, user_email)
-                st.success("✅ Posted!")
-                st.cache_data.clear()
-                st.rerun()
+                with st.spinner("Posting to UberEats..."):
+                    review_id = r.get("review_id") or r.get("order_id") or uid
+                    result = _post_reply_ubereats(review_id, edited_resp, tier)
+
+                if result["ok"]:
+                    st.session_state.post_log.append({
+                        "review_uid": uid, "response": edited_resp[:100],
+                        "posted_at": datetime.now().isoformat(),
+                    })
+                    log_action(uid, "UberEats", r["chain_name"],
+                               "auto_post", user_email, user_email,
+                               f"Posted via UE API, tier={tier}")
+                    if asgn_id:
+                        mark_assignment_completed(asgn_id, user_email)
+                    st.success("✅ Posted to UberEats!")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error(f"Failed to post (HTTP {result['status']}): {result['body'][:200]}")
 
     with b2:
         if st.button("✅ Mark responded", key=f"b_{uid}", use_container_width=True):
