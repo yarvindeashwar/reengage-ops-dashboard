@@ -64,3 +64,25 @@ def init_db():
 
 # Auto-init on import
 init_db()
+
+
+def seed_demo_if_empty():
+    """Auto-seed demo users if the users table is empty (for fresh deploys)."""
+    conn = get_conn()
+    count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if count == 0:
+        demo_users = [
+            ("lead@loopkitchen.com",    "Demo Lead",       "lead",              0),
+            ("alice@loopkitchen.com",   "Alice (Tenured)",  "tenured_operator",  0),
+            ("bob@loopkitchen.com",     "Bob (Tenured)",    "tenured_operator",  0),
+            ("charlie@loopkitchen.com", "Charlie (New)",    "new_operator",     20),
+            ("diana@loopkitchen.com",   "Diana (New)",      "new_operator",     30),
+        ]
+        for email, name, role, reduction in demo_users:
+            conn.execute(
+                "INSERT INTO users (email, name, role, approved, reduction_pct, added_by) "
+                "VALUES (?, ?, ?, 1, ?, 'auto_seed')",
+                (email, name, role, reduction),
+            )
+        conn.commit()
+    conn.close()

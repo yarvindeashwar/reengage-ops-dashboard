@@ -10,6 +10,9 @@ import streamlit as st
 
 st.set_page_config(page_title="ReEngage Ops Dashboard", page_icon="📬", layout="wide")
 
+from local_db import seed_demo_if_empty
+seed_demo_if_empty()
+
 from auth import login_page, is_lead, logout
 from data_loaders import load_reviews, load_response_configs
 from tabs import (
