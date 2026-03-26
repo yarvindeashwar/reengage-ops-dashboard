@@ -97,30 +97,31 @@ def render(df_all, user_email):
 
     # ── Compact table ──
     table_cols = [
-        "priority", "status", "days_left", "chain_name", "brand_name", "platform",
-        "customer_name", "customer_type", "rating_display",
-        "order_value", "review_text", "response_text",
+        "review_uid", "order_id", "review_id",
+        "priority", "status", "days_left",
+        "chain_name", "brand_name", "b_name_id", "platform",
+        "slug", "store_id",
+        "customer_name", "customer_id", "customer_type", "orders_count",
+        "rating_display", "rating_value",
+        "order_value", "items",
+        "review_text", "response_text",
+        "review_date", "portal_link",
     ]
     table = df_show[[c for c in table_cols if c in df_show.columns]].copy()
     table.insert(0, "#", range(1, len(table) + 1))
     table["priority"] = table["priority"].map(lambda x: f"{PRIORITY_ICON.get(x, '')} {x}")
     table["status"] = table["status"].map(lambda x: f"{STATUS_ICON.get(x, '')} {x}")
-    table["review_text"] = table["review_text"].fillna("").str[:80]
-    table["response_text"] = table["response_text"].fillna("—").str[:60]
-    table.columns = [
-        "#", "Priority", "Status", "Days", "Chain", "Brand", "Platform",
-        "Customer", "Type", "Rating",
-        "Order $", "Review (preview)", "AI Response (preview)",
-    ]
 
     st.dataframe(
         table, use_container_width=True, hide_index=True, height=320,
         column_config={
             "#": st.column_config.NumberColumn(width="small"),
-            "Days": st.column_config.NumberColumn(width="small"),
-            "Order $": st.column_config.NumberColumn(width="small", format="$%.0f"),
-            "Review (preview)": st.column_config.TextColumn(width="medium"),
-            "AI Response (preview)": st.column_config.TextColumn(width="medium"),
+            "days_left": st.column_config.NumberColumn("Days", width="small"),
+            "order_value": st.column_config.NumberColumn("Order $", format="$%.0f"),
+            "review_text": st.column_config.TextColumn("Review", width="medium"),
+            "response_text": st.column_config.TextColumn("AI Response", width="medium"),
+            "items": st.column_config.TextColumn("Items", width="medium"),
+            "portal_link": st.column_config.LinkColumn("Portal"),
         },
     )
 

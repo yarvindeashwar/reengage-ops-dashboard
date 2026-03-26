@@ -22,11 +22,14 @@ def render(df_all, chains, platforms):
 
     if not df_filt.empty:
         show_cols = [
-            "priority", "status", "days_left", "chain_name", "brand_name",
-            "platform", "slug", "store_id",
+            "review_uid", "order_id", "review_id",
+            "priority", "status", "days_left",
+            "chain_name", "brand_name", "b_name_id", "platform",
+            "slug", "store_id",
             "customer_name", "customer_id", "customer_type", "orders_count",
-            "rating_display", "order_value",
-            "review_text", "items", "response_text",
+            "rating_display", "rating_value",
+            "order_value", "items",
+            "review_text", "response_text",
             "review_date", "portal_link",
         ]
         disp = df_filt[[c for c in show_cols if c in df_filt.columns]].copy()
@@ -35,13 +38,12 @@ def render(df_all, chains, platforms):
         st.dataframe(
             disp.head(200), use_container_width=True, hide_index=True,
             column_config={
+                "days_left":      st.column_config.NumberColumn("Days", width="small"),
                 "portal_link":    st.column_config.LinkColumn("Portal"),
                 "review_text":    st.column_config.TextColumn("Review", width="medium"),
                 "response_text":  st.column_config.TextColumn("AI Response", width="medium"),
                 "items":          st.column_config.TextColumn("Items", width="medium"),
                 "order_value":    st.column_config.NumberColumn("Order $", format="$%.0f"),
-                "brand_name":     st.column_config.TextColumn("Brand"),
-                "customer_id":    st.column_config.TextColumn("Customer ID"),
                 "orders_count":   st.column_config.NumberColumn("Orders"),
             },
         )

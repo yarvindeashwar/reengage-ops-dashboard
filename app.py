@@ -17,7 +17,7 @@ from auth import login_page, is_lead, logout
 from data_loaders import load_reviews, load_response_configs
 from tabs import (
     my_queue, all_reviews, scoreboard, chain_health,
-    response_config, ops_log, manage_users, lead_overview,
+    response_config, ops_log, manage_users, lead_overview, search_review,
 )
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ operator_tabs = [
     "📥 My Queue", "🗂 All Reviews", "🏆 Scoreboard", "🏥 Chain Health",
     "🤖 Response Config", "📋 Ops Log",
 ]
-lead_tabs = ["📊 Operator Assignments", "👥 Manage Users"]
+lead_tabs = ["🔍 Search Review", "📊 Operator Assignments", "👥 Manage Users"]
 
 tab_names = operator_tabs + (lead_tabs if is_lead(user_role) else [])
 tabs = st.tabs(tab_names)
@@ -101,9 +101,12 @@ with tabs[5]:
 
 if is_lead(user_role):
     with tabs[6]:
-        lead_overview.render(df_all)
+        search_review.render(df_all)
 
     with tabs[7]:
+        lead_overview.render(df_all)
+
+    with tabs[8]:
         manage_users.render(user_email)
 
 # ── Footer ───────────────────────────────────────────────────────────────────
