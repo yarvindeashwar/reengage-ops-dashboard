@@ -51,6 +51,7 @@ def load_reviews() -> pd.DataFrame:
               AND (
                   ARRAY_LENGTH(IFNULL(JSON_VALUE_ARRAY(rrc.ratings), [])) = 0
                   OR CAST(ar.star_rating AS STRING) IN UNNEST(JSON_VALUE_ARRAY(rrc.ratings))
+                  OR ar.rating_value IN UNNEST(JSON_VALUE_ARRAY(rrc.ratings))
               )
           )
         QUALIFY ROW_NUMBER() OVER (
