@@ -7,11 +7,18 @@ Distributes pending reviews to operators, optimising for:
   2. Minimum chain×platform variations per operator (fewer 3P logins)
   3. Equal load, adjusted for new_operator reduction_pct
   4. Leads are never assigned reviews
+
+Algorithm (two-phase bin-packing):
+  Phase 1: Assign whole chain×platform groups to operators to minimise
+           the number of distinct groups (= logins) per operator.
+           Uses a "largest-group-first, emptiest-operator-first" heuristic.
+  Phase 2: Split any oversized groups that couldn't fit in one operator.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections import defaultdict
 
 import pandas as pd
 
@@ -22,7 +29,6 @@ from write_helpers import insert_assignments, expire_stale_assignments, log_acti
 
 
 def _load_operators() -> pd.DataFrame:
-    """Load approved, non-lead operators from local SQLite."""
     conn = get_conn()
     df = pd.read_sql_query(
         f"SELECT email, name, role, reduction_pct FROM users "
@@ -34,7 +40,6 @@ def _load_operators() -> pd.DataFrame:
 
 
 def _load_already_assigned_uids() -> set:
-    """Get review_uids that already have a pending or completed assignment."""
     conn = get_conn()
     df = pd.read_sql_query(
         "SELECT DISTINCT review_uid FROM assignments "
@@ -47,17 +52,6 @@ def _load_already_assigned_uids() -> set:
 
 
 def run_assignment() -> dict:
-    """
-    Main assignment function. Returns summary stats.
-
-    Algorithm:
-    1. Get all PENDING reviews (not expired, not responded, not already assigned)
-    2. Sort by days_left ASC (most urgent first)
-    3. Group by (chain_name, platform)
-    4. Calculate each operator's capacity based on role + reduction_pct
-    5. Assign whole chain×platform groups to operators to minimize login variation
-    6. If a group is too large, split across fewest operators possible
-    """
     expire_stale_assignments()
 
     reviews = load_reviews()
@@ -79,7 +73,7 @@ def run_assignment() -> dict:
 
     pending = pending.sort_values("days_left", ascending=True)
 
-    # Build operator list with effective capacity weights
+    # Build operator list with capacity targets
     ops = []
     for _, op in operators.iterrows():
         reduction = float(op.get("reduction_pct", 0)) if op["role"] == ROLE_NEW else 0.0
@@ -88,6 +82,9 @@ def run_assignment() -> dict:
             "email": op["email"],
             "role": op["role"],
             "weight": weight,
+            "target": 0,
+            "assigned_count": 0,
+            "groups": [],           # list of (chain, plat) assigned
         })
 
     total_weight = sum(o["weight"] for o in ops)
@@ -95,51 +92,72 @@ def run_assignment() -> dict:
 
     for op in ops:
         op["target"] = round(total_reviews * op["weight"] / total_weight)
-        op["assigned_count"] = 0
-        op["chain_platforms"] = set()
 
-    # Group reviews by (chain_name, platform), sorted by group size descending
+    # Group reviews by (chain_name, platform)
     groups = {}
     for (chain, plat), grp in pending.groupby(["chain_name", "platform"]):
         groups[(chain, plat)] = grp.sort_values("days_left").to_dict("records")
 
+    # ── Phase 1: Plan group-to-operator mapping ──
+    # Sort groups largest first. Assign each whole group to the operator
+    # with the most remaining capacity. This naturally gives big groups to
+    # high-capacity operators and small groups cluster together.
     sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
 
-    assignments = []
+    # mapping: (chain, plat) -> list of (operator_idx, count)
+    group_plan = defaultdict(list)
 
     for (chain, plat), review_rows in sorted_groups:
-        remaining = list(review_rows)
+        group_size = len(review_rows)
 
-        while remaining:
-            best = _pick_operator(ops, chain, plat)
-            if best is None:
-                break
+        # Find operator with most remaining capacity
+        best_idx = _best_operator_for_group(ops, group_size)
 
-            capacity_left = best["target"] - best["assigned_count"]
-            if capacity_left <= 0:
-                best = max(ops, key=lambda o: o["target"] - o["assigned_count"])
-                capacity_left = max(best["target"] - best["assigned_count"], 1)
+        if best_idx is not None and ops[best_idx]["target"] - ops[best_idx]["assigned_count"] >= group_size:
+            # Whole group fits in one operator
+            group_plan[(chain, plat)].append((best_idx, group_size))
+            ops[best_idx]["assigned_count"] += group_size
+            ops[best_idx]["groups"].append((chain, plat))
+        else:
+            # Group too large for any single operator — split across operators
+            remaining = group_size
+            while remaining > 0:
+                best_idx = _best_operator_for_group(ops, remaining)
+                if best_idx is None:
+                    # All operators full — force into operator with most remaining
+                    best_idx = max(range(len(ops)),
+                                   key=lambda i: ops[i]["target"] - ops[i]["assigned_count"])
 
-            take = remaining[:capacity_left]
-            remaining = remaining[capacity_left:]
+                capacity = max(ops[best_idx]["target"] - ops[best_idx]["assigned_count"], 1)
+                take = min(remaining, capacity)
+                group_plan[(chain, plat)].append((best_idx, take))
+                ops[best_idx]["assigned_count"] += take
+                ops[best_idx]["groups"].append((chain, plat))
+                remaining -= take
 
-            for rev in take:
+    # ── Phase 2: Build actual assignment rows from the plan ──
+    assignments = []
+
+    for (chain, plat), plan in group_plan.items():
+        review_rows = groups[(chain, plat)]
+        offset = 0
+        for (op_idx, count) in plan:
+            for rev in review_rows[offset:offset + count]:
                 assignments.append({
                     "assignment_id": str(uuid.uuid4()),
                     "review_uid": rev["review_uid"],
                     "order_id": rev.get("order_id", ""),
-                    "operator_email": best["email"],
+                    "operator_email": ops[op_idx]["email"],
                     "chain_name": chain,
                     "platform": plat,
                     "days_left": rev["days_left"],
                 })
-
-            best["assigned_count"] += len(take)
-            best["chain_platforms"].add((chain, plat))
+            offset += count
 
     if assignments:
         insert_assignments(assignments)
 
+    # Deduplicate group counts for summary
     summary = {
         "assigned": len(assignments),
         "operators": len(ops),
@@ -147,7 +165,7 @@ def run_assignment() -> dict:
         "per_operator": {
             op["email"]: {
                 "count": op["assigned_count"],
-                "chain_platforms": len(op["chain_platforms"]),
+                "chain_platforms": len(set(op["groups"])),
             }
             for op in ops
         },
@@ -162,23 +180,29 @@ def run_assignment() -> dict:
     return summary
 
 
-def _pick_operator(ops: list[dict], chain: str, plat: str) -> dict | None:
+def _best_operator_for_group(ops: list[dict], group_size: int) -> int | None:
     """
-    Pick the best operator for a (chain, platform) group.
-    Priority:
-      1. Already has this (chain, plat) and has remaining capacity
-      2. Fewest distinct (chain, plat) combos (minimise logins)
-      3. Most remaining capacity
+    Pick the operator with the most remaining capacity.
+    Among ties, prefer the one with fewer distinct groups (fewer logins).
+    Returns the index into ops, or None if all are full.
     """
-    candidates = [o for o in ops if o["assigned_count"] < o["target"]]
-    if not candidates:
-        return None
+    best_idx = None
+    best_remaining = 0
+    best_groups = float("inf")
 
-    already_have = [o for o in candidates if (chain, plat) in o["chain_platforms"]]
-    if already_have:
-        return max(already_have, key=lambda o: o["target"] - o["assigned_count"])
+    for i, op in enumerate(ops):
+        remaining = op["target"] - op["assigned_count"]
+        if remaining <= 0:
+            continue
+        n_groups = len(set(op["groups"]))
+        # Prefer: most remaining capacity, then fewest groups
+        if (remaining > best_remaining) or \
+           (remaining == best_remaining and n_groups < best_groups):
+            best_idx = i
+            best_remaining = remaining
+            best_groups = n_groups
 
-    return min(candidates, key=lambda o: (len(o["chain_platforms"]), -(o["target"] - o["assigned_count"])))
+    return best_idx
 
 
 if __name__ == "__main__":
