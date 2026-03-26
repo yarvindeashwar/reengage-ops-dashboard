@@ -24,17 +24,23 @@ def load_reviews() -> pd.DataFrame:
             ar.order_id,
             ar.review_id,
             sm.chain AS chain_name,
+            sm.b_name_id,
+            sm.vb_name AS brand_name,
             ar.platform,
             ar.slug,
             ar.store_id,
             ar.customer_name,
+            ar.user_id AS customer_id,
+            SAFE_CAST(ar.orders_count AS INT64) AS orders_count,
             CASE WHEN SAFE_CAST(ar.orders_count AS INT64) > 1 THEN 'existing' ELSE 'new' END AS customer_type,
             ar.star_rating,
             ar.rating_type,
-            ar.rating_value AS rating_value_raw,
+            ar.rating_value,
             ar.review_text,
             ar.is_replied,
             ar.replied_comment,
+            ar.items,
+            ar.order_value,
             COALESCE(ar.review_timestamp, ar.order_timestamp) AS event_timestamp,
             DATE(DATETIME(COALESCE(ar.review_timestamp, ar.order_timestamp), 'America/Chicago')) AS review_date
         FROM `{TABLE_AUTOMATION_REVIEWS}` ar
@@ -99,13 +105,22 @@ def load_reviews() -> pd.DataFrame:
                 ELSE 'NORMAL'
             END AS priority,
             CASE
-                WHEN LOWER(CAST(star_rating AS STRING)) IN ('thumbs_up', 'rating_value_thumbs_up', 'rating_value_loved') THEN 'Thumbs Up'
-                WHEN LOWER(CAST(star_rating AS STRING)) IN ('thumbs_down', 'rating_value_thumbs_down') THEN 'Thumbs Down'
-                WHEN SAFE_CAST(star_rating AS FLOAT64) IS NOT NULL
+                WHEN rating_value = 'RATING_VALUE_LOVED' THEN 'Loved'
+                WHEN rating_value = 'RATING_VALUE_THUMBS_UP' THEN 'Thumbs Up'
+                WHEN rating_value = 'RATING_VALUE_THUMBS_DOWN' THEN 'Thumbs Down'
+                WHEN rating_value = 'RATING_VALUE_FIVE' THEN '5 Stars'
+                WHEN SAFE_CAST(star_rating AS FLOAT64) > 0
                     THEN CONCAT(CAST(CAST(SAFE_CAST(star_rating AS FLOAT64) AS INT64) AS STRING), ' Stars')
-                ELSE CAST(star_rating AS STRING)
+                ELSE COALESCE(rating_value, CAST(star_rating AS STRING))
             END AS rating_display,
-            SAFE_CAST(star_rating AS FLOAT64) AS rating_numeric,
+            CASE
+                WHEN rating_value = 'RATING_VALUE_LOVED' THEN 5.0
+                WHEN rating_value = 'RATING_VALUE_THUMBS_UP' THEN 4.0
+                WHEN rating_value = 'RATING_VALUE_THUMBS_DOWN' THEN 1.0
+                WHEN rating_value = 'RATING_VALUE_FIVE' THEN 5.0
+                WHEN SAFE_CAST(star_rating AS FLOAT64) > 0 THEN SAFE_CAST(star_rating AS FLOAT64)
+                ELSE NULL
+            END AS rating_numeric,
             CASE
                 WHEN platform = 'UberEats' THEN
                     CONCAT('https://merchants.ubereats.com/manager/home/', store_id, '/feedback/reviews/', order_id)
@@ -117,9 +132,12 @@ def load_reviews() -> pd.DataFrame:
     )
 
     SELECT
-        review_uid, order_id, review_id, chain_name, platform, slug, store_id,
-        customer_name, customer_type, CAST(star_rating AS STRING) AS star_rating,
-        rating_numeric, rating_display, review_text, review_date, days_left,
+        review_uid, order_id, review_id, chain_name, b_name_id, brand_name,
+        platform, slug, store_id,
+        customer_name, customer_id, orders_count, customer_type,
+        CAST(star_rating AS STRING) AS star_rating, rating_type, rating_value,
+        rating_numeric, rating_display, review_text, items, order_value,
+        review_date, days_left,
         portal_link, response_text, rr_response_type AS response_type, coupon_value,
         CAST(config_id AS STRING) AS config_id, status, priority, is_replied
     FROM with_status
