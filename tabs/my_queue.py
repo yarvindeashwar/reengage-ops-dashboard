@@ -96,18 +96,21 @@ def render(df_all, user_email):
         return
 
     # ── Compact table ──
-    table = df_show[[
-        "priority", "status", "days_left", "chain_name", "platform",
-        "customer_name", "rating_display", "review_text", "response_text",
-    ]].copy()
+    table_cols = [
+        "priority", "status", "days_left", "chain_name", "brand_name", "platform",
+        "customer_name", "customer_type", "rating_display",
+        "order_value", "review_text", "response_text",
+    ]
+    table = df_show[[c for c in table_cols if c in df_show.columns]].copy()
     table.insert(0, "#", range(1, len(table) + 1))
     table["priority"] = table["priority"].map(lambda x: f"{PRIORITY_ICON.get(x, '')} {x}")
     table["status"] = table["status"].map(lambda x: f"{STATUS_ICON.get(x, '')} {x}")
     table["review_text"] = table["review_text"].fillna("").str[:80]
     table["response_text"] = table["response_text"].fillna("—").str[:60]
     table.columns = [
-        "#", "Priority", "Status", "Days", "Chain", "Platform",
-        "Customer", "Rating", "Review (preview)", "AI Response (preview)",
+        "#", "Priority", "Status", "Days", "Chain", "Brand", "Platform",
+        "Customer", "Type", "Rating",
+        "Order $", "Review (preview)", "AI Response (preview)",
     ]
 
     st.dataframe(
@@ -115,6 +118,7 @@ def render(df_all, user_email):
         column_config={
             "#": st.column_config.NumberColumn(width="small"),
             "Days": st.column_config.NumberColumn(width="small"),
+            "Order $": st.column_config.NumberColumn(width="small", format="$%.0f"),
             "Review (preview)": st.column_config.TextColumn(width="medium"),
             "AI Response (preview)": st.column_config.TextColumn(width="medium"),
         },
@@ -150,9 +154,18 @@ def render(df_all, user_email):
     col_detail, col_action = st.columns([3, 2])
 
     with col_detail:
-        st.markdown(f"**{r['chain_name']}** · {r['platform']} · {r['rating_display']} · "
-                    f"**{r['days_left']}d left** · {r['customer_name'] or '—'} ({r['customer_type']})")
-        st.markdown(f"Store: `{r['slug']}`  ·  Review date: {r['review_date']}")
+        st.markdown(f"**{r['chain_name']}** · {r.get('brand_name') or ''} · {r['platform']} · "
+                    f"{r['rating_display']} · **{r['days_left']}d left**")
+        st.markdown(f"**Customer:** {r['customer_name'] or '—'} ({r['customer_type']}) · "
+                    f"ID: `{r.get('customer_id') or '—'}` · Orders: {r.get('orders_count') or '—'}")
+        st.markdown(f"**Store:** `{r['slug']}` · Brand ID: `{r.get('b_name_id') or '—'}` · "
+                    f"Store ID: `{r['store_id'] or '—'}`")
+        st.markdown(f"**Review date:** {r['review_date']} · "
+                    f"**Order value:** ${r['order_value']:.2f}" if pd.notna(r.get("order_value")) else
+                    f"**Review date:** {r['review_date']}")
+
+        if r.get("items"):
+            st.caption(f"Items: {r['items']}")
 
         if r.get("review_text"):
             st.markdown(f"> {r['review_text']}")

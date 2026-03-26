@@ -22,9 +22,12 @@ def render(df_all, chains, platforms):
 
     if not df_filt.empty:
         show_cols = [
-            "priority", "status", "days_left", "chain_name", "platform",
-            "customer_name", "customer_type", "rating_display", "review_text",
-            "response_text", "review_date", "portal_link",
+            "priority", "status", "days_left", "chain_name", "brand_name",
+            "platform", "slug", "store_id",
+            "customer_name", "customer_id", "customer_type", "orders_count",
+            "rating_display", "order_value",
+            "review_text", "items", "response_text",
+            "review_date", "portal_link",
         ]
         disp = df_filt[[c for c in show_cols if c in df_filt.columns]].copy()
         disp["priority"] = disp["priority"].map(lambda x: f"{PRIORITY_ICON.get(x,'')} {x}")
@@ -35,6 +38,11 @@ def render(df_all, chains, platforms):
                 "portal_link":    st.column_config.LinkColumn("Portal"),
                 "review_text":    st.column_config.TextColumn("Review", width="medium"),
                 "response_text":  st.column_config.TextColumn("AI Response", width="medium"),
+                "items":          st.column_config.TextColumn("Items", width="medium"),
+                "order_value":    st.column_config.NumberColumn("Order $", format="$%.0f"),
+                "brand_name":     st.column_config.TextColumn("Brand"),
+                "customer_id":    st.column_config.TextColumn("Customer ID"),
+                "orders_count":   st.column_config.NumberColumn("Orders"),
             },
         )
         st.download_button("Download CSV", df_filt.to_csv(index=False),
