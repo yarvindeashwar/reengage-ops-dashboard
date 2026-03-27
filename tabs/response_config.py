@@ -15,15 +15,15 @@ def render(rc_df):
         return
 
     active = rc_df[rc_df["paused"] == False]
-    paused = rc_df[rc_df["paused"] == True]
 
+    # Unique chains with active automation (exclude chains that only have paused configs)
+    paused_only_chains = set(rc_df[rc_df["paused"] == True]["chain_name"]) - set(active["chain_name"])
     unique_chains_with_automation = active["chain_name"].nunique()
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3 = st.columns(3)
     m1.metric("Total configs", len(rc_df))
     m2.metric("Active", len(active))
-    m3.metric("Paused", len(paused))
-    m4.metric("Customers with automation", unique_chains_with_automation)
+    m3.metric("Customers with automation", unique_chains_with_automation)
 
     def _parse_json(val):
         if pd.isna(val) or val is None:
