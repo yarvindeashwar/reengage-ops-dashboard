@@ -17,7 +17,6 @@ ENV PORT=8080
 
 EXPOSE ${PORT}
 
-CMD streamlit run app.py \
-    --server.port=${PORT} \
-    --server.address=0.0.0.0 \
-    --server.headless=true
+RUN chmod +x entrypoint.sh
+
+CMD ["./entrypoint.sh"]
