@@ -11,44 +11,67 @@ def render(df_all):
     st.subheader("Search Reviews")
     st.caption("Look up a specific review by its unique identifier.")
 
-    # ── Search by specific field ──
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        field = st.selectbox("Search by", [
-            "review_uid",
-            "order_id",
-            "review_id",
-            "customer_id",
-        ], key="sr_field", format_func=lambda x: {
-            "review_uid": "Review UID",
-            "order_id": "Order ID",
-            "review_id": "Review ID",
-            "customer_id": "Customer ID",
-        }.get(x, x))
-    with c2:
-        query = st.text_input("Paste ID", placeholder="Paste the exact ID here...",
-                              key="sr_query")
+    # ── Search mode ──
+    search_mode = st.radio("Search mode", ["By ID", "By Customer Name + Chain"],
+                           horizontal=True, key="sr_mode")
 
-    if not query or len(query.strip()) < 3:
-        st.info("Paste a review UID, order ID, review ID, or customer ID to look it up.")
-        return
+    if search_mode == "By ID":
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            field = st.selectbox("Search by", [
+                "review_uid", "order_id", "review_id", "customer_id",
+            ], key="sr_field", format_func=lambda x: {
+                "review_uid": "Review UID",
+                "order_id": "Order ID",
+                "review_id": "Review ID",
+                "customer_id": "Customer ID",
+            }.get(x, x))
+        with c2:
+            query = st.text_input("Paste ID", placeholder="Paste the exact ID here...",
+                                  key="sr_query")
 
-    q = query.strip()
+        if not query or len(query.strip()) < 3:
+            st.info("Paste a review UID, order ID, review ID, or customer ID to look it up.")
+            return
 
-    # Exact match on selected field
-    if field not in df_all.columns:
-        st.error(f"Field `{field}` not found in data.")
-        return
+        q = query.strip()
+        if field not in df_all.columns:
+            st.error(f"Field `{field}` not found in data.")
+            return
 
-    results = df_all[df_all[field].astype(str) == q].copy()
+        results = df_all[df_all[field].astype(str) == q].copy()
+        if results.empty:
+            results = df_all[df_all[field].astype(str).str.contains(q, na=False, case=False)].copy()
 
-    if results.empty:
-        # Try partial match as fallback
-        results = df_all[df_all[field].astype(str).str.contains(q, na=False, case=False)].copy()
+        if results.empty:
+            st.warning(f"No reviews found with {field} = `{q}`")
+            return
 
-    if results.empty:
-        st.warning(f"No reviews found with {field} = `{q}`")
-        return
+    else:
+        # Customer name + chain search
+        chains = sorted(df_all["chain_name"].unique().tolist()) if not df_all.empty else []
+        c1, c2 = st.columns([2, 2])
+        with c1:
+            cust_name = st.text_input("Customer name", placeholder="Enter customer name...",
+                                      key="sr_cust_name")
+        with c2:
+            chain_filter = st.selectbox("Chain", ["All"] + chains, key="sr_chain")
+
+        if not cust_name or len(cust_name.strip()) < 2:
+            st.info("Enter a customer name (at least 2 characters) and optionally select a chain.")
+            return
+
+        mask = df_all["customer_name"].astype(str).str.lower().str.contains(
+            cust_name.strip().lower(), na=False)
+        if chain_filter != "All":
+            mask &= df_all["chain_name"] == chain_filter
+
+        results = df_all[mask].copy()
+
+        if results.empty:
+            st.warning(f"No reviews found for customer '{cust_name}'"
+                       + (f" in chain '{chain_filter}'" if chain_filter != "All" else ""))
+            return
 
     st.success(f"Found {len(results)} review(s)")
 

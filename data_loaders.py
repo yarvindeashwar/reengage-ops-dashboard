@@ -203,6 +203,53 @@ def load_response_configs() -> pd.DataFrame:
     return bq_read(sql)
 
 
+def load_configs_for_matching() -> list[dict]:
+    """Load configs in the format expected by find_matching_config()."""
+    import json
+    df = load_response_configs()
+    if df.empty:
+        return []
+
+    configs = []
+    for _, row in df.iterrows():
+        def _parse(val):
+            if pd.isna(val) or val is None:
+                return []
+            try:
+                return json.loads(val)
+            except Exception:
+                return []
+
+        # Build platform_configs dict
+        platform_configs = {}
+        for plat, prefix in [("Doordash", "dd"), ("UberEats", "ue")]:
+            ct = row.get(f"{prefix}_coupon_type")
+            if ct:
+                platform_configs[plat] = {
+                    "coupon_type": ct,
+                    "fixed_value": row.get(f"{prefix}_coupon_fixed_value", 0) or 0,
+                    "percentage_value": row.get(f"{prefix}_coupon_percentage_value", 0) or 0,
+                    "min_order_value": row.get("min_order_value", 0) or 0,
+                }
+
+        configs.append({
+            "config_id": row["config_id"],
+            "chain_name": row["chain_name"],
+            "paused": row["paused"],
+            "response_type": row["response_type"],
+            "tonality": row.get("tonality", "neutral"),
+            "vb_platforms": _parse(row["vb_platforms"]),
+            "ratings": _parse(row["ratings"]),
+            "customer_types": _parse(row["customer_types"]),
+            "feedback_presence": _parse(row.get("feedback_presence")),
+            "b_name_ids": [],  # loaded from BQ as JSON array — empty means "all"
+            "created_at": str(row.get("created_at", "")),
+            "platform_configs": platform_configs,
+        })
+
+    return configs
+
+
 # ── Ops log (local SQLite) ──────────────────────────────────────────────────
 
 @st.cache_data(ttl=30, show_spinner="Loading ops log...")

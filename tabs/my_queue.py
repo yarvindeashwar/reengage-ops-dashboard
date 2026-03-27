@@ -1,48 +1,11 @@
-"""My Queue tab — compact table view with detail panel for selected review."""
-
-from datetime import datetime
+"""My Queue tab — table view with generate responses and inline mark responded."""
 
 import pandas as pd
-import requests
 import streamlit as st
 
 from config import PRIORITY_ICON, STATUS_ICON
-from data_loaders import load_my_assignments
+from data_loaders import load_my_assignments, load_configs_for_matching
 from write_helpers import log_action, mark_assignment_completed
-
-BACKEND_URL = "https://api.loopapplication.xyz"
-UE_TIERS = ["NONE", "TIER_1", "TIER_2", "TIER_3"]
-
-
-def _post_reply_ubereats(review_id: str, comment: str, promotion: str) -> dict:
-    """Call the backend /actions/review/reply endpoint for UberEats."""
-    resp = requests.post(
-        f"{BACKEND_URL}/actions/review/reply",
-        params={"reviewId": review_id},
-        json={
-            "platform": "uber_eats",
-            "comment": comment,
-            "promotion": promotion,
-        },
-        timeout=30,
-    )
-    return {"ok": resp.ok, "status": resp.status_code, "body": resp.text}
-
-
-def _save_reply_doordash(review_id: str, comment: str, promotion: int) -> dict:
-    """Call the backend /actions/review/reply endpoint for DoorDash.
-    Saves to review_reply_internal with sent=False. Does NOT post to DD."""
-    resp = requests.post(
-        f"{BACKEND_URL}/actions/review/reply",
-        params={"reviewId": review_id},
-        json={
-            "platform": "doordash",
-            "comment": comment[:300],  # DD limit 300 chars
-            "promotion": promotion,
-        },
-        timeout=30,
-    )
-    return {"ok": resp.ok, "status": resp.status_code, "body": resp.text}
 
 
 def render(df_all, user_email):
@@ -67,15 +30,24 @@ def render(df_all, user_email):
     df_q["assignment_id"] = df_q["review_uid"].map(asgn_map)
     df_q = df_q.sort_values("days_left", ascending=True).reset_index(drop=True)
 
-    # ── Metrics row ──
+    # ── Metrics ──
     pending = df_q[df_q["status"] == "PENDING"]
+    no_response = df_q[df_q["response_text"].isna()]
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Assigned", len(df_q))
     m2.metric("Pending", len(pending))
     m3.metric("Critical", len(pending[pending["priority"] == "CRITICAL"]) if not pending.empty else 0)
-    m4.metric("Has AI response", int(df_q["response_text"].notna().sum()))
+    m4.metric("Missing AI response", len(no_response))
+
+    # ── Generate Responses button ──
+    if len(no_response) > 0:
+        st.divider()
+        st.markdown(f"**{len(no_response)} reviews** don't have AI responses yet.")
+        if st.button("✨ Generate Responses", type="primary", key="gen_resp"):
+            _generate_responses(no_response, user_email)
 
     # ── Filters ──
+    st.divider()
     c1, c2, c3 = st.columns(3)
     f_priority = c1.selectbox("Priority", ["All", "CRITICAL", "URGENT", "NORMAL"], key="mq_pri")
     f_status = c2.selectbox("Status", ["PENDING", "All", "RESPONDED", "EXPIRED"], key="mq_st")
@@ -95,7 +67,9 @@ def render(df_all, user_email):
         st.info("No reviews match these filters.")
         return
 
-    # ── Compact table ──
+    st.caption(f"Showing {len(df_show)} reviews")
+
+    # ── Table with all columns ──
     table_cols = [
         "review_uid", "order_id", "review_id",
         "priority", "status", "days_left",
@@ -113,7 +87,7 @@ def render(df_all, user_email):
     table["status"] = table["status"].map(lambda x: f"{STATUS_ICON.get(x, '')} {x}")
 
     st.dataframe(
-        table, use_container_width=True, hide_index=True, height=320,
+        table, use_container_width=True, hide_index=True, height=400,
         column_config={
             "#": st.column_config.NumberColumn(width="small"),
             "days_left": st.column_config.NumberColumn("Days", width="small"),
@@ -125,10 +99,9 @@ def render(df_all, user_email):
         },
     )
 
-    st.caption(f"Showing {len(df_show)} reviews. Select one below to take action.")
-
-    # ── Select & act ──
+    # ── Inline mark responded ──
     st.divider()
+    st.markdown("**Mark a review as responded**")
 
     options = []
     for _, r in df_show.iterrows():
@@ -136,160 +109,80 @@ def render(df_all, user_email):
         resp_tag = "🤖" if pd.notna(r.get("response_text")) else "❌"
         label = (f"{icon} {r['chain_name']} · {r['platform']} · "
                  f"{r['rating_display']} · {r['days_left']}d · "
-                 f"{r['customer_name'] or '—'} {resp_tag}")
+                 f"{r['customer_name'] or '—'} · {r['order_id'] or ''} {resp_tag}")
         options.append(label)
 
-    selected_idx = st.selectbox(
-        "Select a review to respond",
-        range(len(options)),
-        format_func=lambda i: options[i],
-        key="mq_select",
-    )
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        selected_idx = st.selectbox("Select review", range(len(options)),
+                                    format_func=lambda i: options[i], key="mq_select")
+    with c2:
+        rem = st.text_input("Remarks", key="mq_rem", placeholder="optional")
 
     r = df_show.iloc[selected_idx]
     uid = r["review_uid"]
     asgn_id = r.get("assignment_id", "")
+
+    # Show response preview if it exists
     resp = r.get("response_text") or ""
+    if resp:
+        st.code(resp, language=None)
+    if r.get("portal_link"):
+        st.link_button("📋 Open portal", r["portal_link"])
 
-    # ── Detail panel ──
-    col_detail, col_action = st.columns([3, 2])
+    if st.button("✅ Mark responded", key=f"mr_{uid}", use_container_width=True):
+        method = "manual_dd" if r["platform"] == "Doordash" else "manual_ue"
+        log_action(uid, r["platform"], r["chain_name"],
+                   "mark_responded", user_email, user_email, rem or method)
+        if asgn_id:
+            mark_assignment_completed(asgn_id, user_email)
+        st.success("Done!")
+        st.cache_data.clear()
+        st.rerun()
 
-    with col_detail:
-        st.markdown(f"**{r['chain_name']}** · {r.get('brand_name') or ''} · {r['platform']} · "
-                    f"{r['rating_display']} · **{r['days_left']}d left**")
-        st.markdown(f"**Customer:** {r['customer_name'] or '—'} ({r['customer_type']}) · "
-                    f"ID: `{r.get('customer_id') or '—'}` · Orders: {r.get('orders_count') or '—'}")
-        st.markdown(f"**Store:** `{r['slug']}` · Brand ID: `{r.get('b_name_id') or '—'}` · "
-                    f"Store ID: `{r['store_id'] or '—'}`")
-        st.markdown(f"**Review date:** {r['review_date']} · "
-                    f"**Order value:** ${r['order_value']:.2f}" if pd.notna(r.get("order_value")) else
-                    f"**Review date:** {r['review_date']}")
 
-        if r.get("items"):
-            st.caption(f"Items: {r['items']}")
+def _generate_responses(no_response_df, user_email):
+    """Generate AI responses for reviews that don't have one."""
+    from response_generator import generate_and_save, find_matching_config
+    from write_helpers import log_action
 
-        if r.get("review_text"):
-            st.markdown(f"> {r['review_text']}")
-        else:
-            st.caption("_No review text_")
+    configs = load_configs_for_matching()
+    if not configs:
+        st.error("No response configs found. Cannot generate responses.")
+        return
 
-        if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0:
-            st.markdown(f"💰 Coupon: **${r['coupon_value']:.2f}**")
+    total = len(no_response_df)
+    progress = st.progress(0, text=f"Generating responses... 0/{total}")
+    success = 0
+    skipped = 0
+    failed = 0
 
-    with col_action:
-        if r["status"] != "PENDING":
-            st.markdown(f"Status: **{r['status']}**")
-            return
+    for i, (_, review) in enumerate(no_response_df.iterrows()):
+        review_dict = review.to_dict()
 
-        if r["platform"] == "UberEats":
-            st.caption("🟢 UberEats — Auto-post available")
-        else:
-            st.caption("🟡 DoorDash — Copy & paste")
-            if r.get("portal_link"):
-                st.link_button("📋 Open DD Portal",
-                               r["portal_link"], use_container_width=True)
+        config = find_matching_config(review_dict, configs)
+        if not config:
+            skipped += 1
+            progress.progress((i + 1) / total, text=f"Generating... {i+1}/{total} (no config match)")
+            continue
 
-    # ── Response editor (full width below detail) ──
-    st.markdown("---")
-    st.markdown("**Response to post:**")
-    edited_resp = st.text_area(
-        "Edit or write your response",
-        value=resp,
-        height=120,
-        key=f"resp_{uid}",
-        placeholder="No AI response available — write your own response here...",
-        label_visibility="collapsed",
-    )
-
-    if not resp and not edited_resp:
-        st.caption("💡 No AI response was generated. Write a custom response above.")
-    elif edited_resp != resp:
-        st.caption("✏️ Response modified from AI original")
-
-    # ── Platform-specific options ──
-    coupon_default = int(r["coupon_value"]) if pd.notna(r.get("coupon_value")) and r["coupon_value"] > 0 else 0
-
-    if r["platform"] == "UberEats":
-        t1, t2 = st.columns([1, 1])
-        with t1:
-            tier = st.selectbox("Promotion tier", UE_TIERS, key=f"tier_{uid}",
-                                help="UberEats decides the dollar amount per tier. "
-                                     "NONE = no promo, TIER_1/2/3 = increasing value.")
-        with t2:
-            if coupon_default > 0:
-                st.caption(f"💡 Config suggests **${coupon_default}** coupon")
+        try:
+            result = generate_and_save(review_dict, config)
+            if result.get("saved"):
+                success += 1
             else:
-                st.caption("Config: no coupon configured")
-    else:
-        t1, t2 = st.columns([1, 1])
-        with t1:
-            dd_promo = st.number_input("Coupon $ amount", min_value=0, value=coupon_default,
-                                       step=1, key=f"ddpromo_{uid}",
-                                       help="Dollar amount for DoorDash promotion (0 = none)")
-        with t2:
-            if coupon_default > 0:
-                st.caption(f"💡 Config suggests **${coupon_default}** coupon")
-            else:
-                st.caption("Config: no coupon configured")
-        if edited_resp and len(edited_resp) > 300:
-            st.warning(f"⚠️ DoorDash limit is 300 chars. Current: {len(edited_resp)} chars.")
+                failed += 1
+        except Exception as e:
+            failed += 1
+            st.caption(f"Error for {review_dict.get('order_id', '?')}: {e}")
 
-    # ── Action buttons ──
-    b1, b2, b3 = st.columns([2, 2, 3])
+        progress.progress((i + 1) / total, text=f"Generating... {i+1}/{total}")
 
-    with b1:
-        if r["platform"] == "UberEats" and edited_resp:
-            if st.button("🚀 Auto-post to UberEats", key=f"ue_{uid}",
-                         type="primary", use_container_width=True):
-                with st.spinner("Posting to UberEats..."):
-                    review_id = r.get("review_id") or r.get("order_id") or uid
-                    result = _post_reply_ubereats(review_id, edited_resp, tier)
+    progress.empty()
+    st.success(f"Done! Generated: **{success}** · Skipped (no config): **{skipped}** · Failed: **{failed}**")
 
-                if result["ok"]:
-                    st.session_state.post_log.append({
-                        "review_uid": uid, "response": edited_resp[:100],
-                        "posted_at": datetime.now().isoformat(),
-                    })
-                    log_action(uid, "UberEats", r["chain_name"],
-                               "auto_post", user_email, user_email,
-                               f"Posted via UE API, tier={tier}")
-                    if asgn_id:
-                        mark_assignment_completed(asgn_id, user_email)
-                    st.success("✅ Posted to UberEats!")
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.error(f"Failed to post (HTTP {result['status']}): {result['body'][:200]}")
+    log_action("batch", "all", "all", "generate_responses", user_email, user_email,
+               f"Generated {success}, skipped {skipped}, failed {failed}")
 
-        elif r["platform"] == "Doordash" and edited_resp:
-            if st.button("💾 Save & Open DD Portal", key=f"dd_{uid}",
-                         type="primary", use_container_width=True):
-                with st.spinner("Saving reply..."):
-                    review_id = r.get("review_id") or r.get("order_id") or uid
-                    result = _save_reply_doordash(review_id, edited_resp, dd_promo)
-
-                if result["ok"]:
-                    log_action(uid, "Doordash", r["chain_name"],
-                               "save_dd_reply", user_email, user_email,
-                               f"Saved DD reply, promo=${dd_promo}")
-                    st.success("✅ Reply saved! Now paste it in the DD portal.")
-                    if r.get("portal_link"):
-                        st.link_button("📋 Open DD Portal & Paste",
-                                       r["portal_link"], use_container_width=True)
-                else:
-                    st.error(f"Failed to save (HTTP {result['status']}): {result['body'][:200]}")
-
-    with b2:
-        if st.button("✅ Mark responded", key=f"b_{uid}", use_container_width=True):
-            method = "auto_ue" if r["platform"] == "UberEats" else "manual_dd"
-            log_action(uid, r["platform"], r["chain_name"],
-                       "mark_responded", user_email, user_email,
-                       f"custom_response" if edited_resp != resp else method)
-            if asgn_id:
-                mark_assignment_completed(asgn_id, user_email)
-            st.success("Done!")
-            st.cache_data.clear()
-            st.rerun()
-
-    with b3:
-        rem = st.text_input("Remarks", key=f"r_{uid}", placeholder="optional")
+    st.cache_data.clear()
+    st.rerun()
