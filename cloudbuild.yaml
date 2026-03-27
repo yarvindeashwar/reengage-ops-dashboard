@@ -25,6 +25,8 @@ steps:
       - '--max-instances=3'
       - '--timeout=3600'
       - '--allow-unauthenticated'
+      - '--add-cloudsql-instances=arboreal-vision-339901:us-central1:mysqladmin'
+      - '--set-env-vars=DB_HOST=/cloudsql/arboreal-vision-339901:us-central1:mysqladmin,DB_USER=loop,DB_PASSWORD=password,DB_NAME=loop_core'
 
 images:
   - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
