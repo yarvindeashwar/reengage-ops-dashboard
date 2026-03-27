@@ -16,9 +16,10 @@ def render(rc_df):
 
     active = rc_df[rc_df["paused"] == False]
 
-    # Unique chains with active automation (exclude chains that only have paused configs)
-    paused_only_chains = set(rc_df[rc_df["paused"] == True]["chain_name"]) - set(active["chain_name"])
-    unique_chains_with_automation = active["chain_name"].nunique()
+    # Total unique chains minus chains that have any paused config
+    all_chains = set(rc_df["chain_name"].unique())
+    paused_chains = set(rc_df[rc_df["paused"] == True]["chain_name"].unique())
+    unique_chains_with_automation = len(all_chains) - len(paused_chains)
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Total configs", len(rc_df))
