@@ -1,6 +1,8 @@
 """
-Data loaders — BigQuery for reviews/configs (read-only), local SQLite for v2 tables.
+Data loaders — BigQuery for everything (reviews, configs, v2 tables).
 """
+
+import json
 
 import pandas as pd
 import streamlit as st
@@ -8,12 +10,12 @@ import streamlit as st
 from config import (
     TABLE_AUTOMATION_REVIEWS, TABLE_SLUG_AM_MAPPING,
     TABLE_REVIEW_RESPONSE_CFG, TABLE_REVIEW_RESPONSES,
+    TABLE_ASSIGNMENTS, TABLE_OPS_LOG,
 )
 from db import bq_read
-from local_db import get_conn
 
 
-# ── Reviews (BigQuery, read-only) ───────────────────────────────────────────
+# ── Reviews (existing tables, read-only) ─────────────────────────────────────
 
 @st.cache_data(ttl=120, show_spinner="Loading reviews from BigQuery...")
 def load_reviews() -> pd.DataFrame:
@@ -148,38 +150,33 @@ def load_reviews() -> pd.DataFrame:
     return bq_read(sql)
 
 
-# ── Assignments (local SQLite) ───────────────────────────────────────────────
+# ── Assignments (BQ v2 table) ────────────────────────────────────────────────
 
 @st.cache_data(ttl=30, show_spinner="Loading assignments...")
 def load_assignments() -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query("""
+    return bq_read(f"""
         SELECT assignment_id, review_uid, order_id, operator_email,
                chain_name, platform, days_left, status, assigned_at, completed_at
-        FROM assignments
-        WHERE assigned_at >= datetime('now', '-14 days')
+        FROM `{TABLE_ASSIGNMENTS}`
+        WHERE assigned_at >= TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY))
         ORDER BY assigned_at DESC
-    """, conn)
-    conn.close()
-    return df
+    """)
 
 
 def load_my_assignments(email: str) -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query("""
+    se = email.replace("'", "''")
+    return bq_read(f"""
         SELECT assignment_id, review_uid, order_id, chain_name, platform,
                days_left, status, assigned_at, completed_at
-        FROM assignments
-        WHERE operator_email = ?
+        FROM `{TABLE_ASSIGNMENTS}`
+        WHERE operator_email = '{se}'
           AND status = 'pending'
-          AND assigned_at >= datetime('now', '-14 days')
+          AND assigned_at >= TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY))
         ORDER BY days_left ASC
-    """, conn, params=(email,))
-    conn.close()
-    return df
+    """)
 
 
-# ── Response configs (BigQuery, read-only) ───────────────────────────────────
+# ── Response configs (existing, read-only) ───────────────────────────────────
 
 @st.cache_data(ttl=120, show_spinner="Loading configs...")
 def load_response_configs() -> pd.DataFrame:
@@ -205,7 +202,6 @@ def load_response_configs() -> pd.DataFrame:
 
 def load_configs_for_matching() -> list[dict]:
     """Load configs in the format expected by find_matching_config()."""
-    import json
     df = load_response_configs()
     if df.empty:
         return []
@@ -220,7 +216,6 @@ def load_configs_for_matching() -> list[dict]:
             except Exception:
                 return []
 
-        # Build platform_configs dict
         platform_configs = {}
         for plat, prefix in [("Doordash", "dd"), ("UberEats", "ue")]:
             ct = row.get(f"{prefix}_coupon_type")
@@ -242,7 +237,7 @@ def load_configs_for_matching() -> list[dict]:
             "ratings": _parse(row["ratings"]),
             "customer_types": _parse(row["customer_types"]),
             "feedback_presence": _parse(row.get("feedback_presence")),
-            "b_name_ids": [],  # loaded from BQ as JSON array — empty means "all"
+            "b_name_ids": [],
             "created_at": str(row.get("created_at", "")),
             "platform_configs": platform_configs,
         })
@@ -250,17 +245,14 @@ def load_configs_for_matching() -> list[dict]:
     return configs
 
 
-# ── Ops log (local SQLite) ──────────────────────────────────────────────────
+# ── Ops log (BQ v2 table) ───────────────────────────────────────────────────
 
 @st.cache_data(ttl=30, show_spinner="Loading ops log...")
 def load_ops_log() -> pd.DataFrame:
-    conn = get_conn()
-    df = pd.read_sql_query("""
+    return bq_read(f"""
         SELECT id, review_uid, platform, chain_name, action,
                operator_email, performed_by, remarks, processing_timestamp
-        FROM ops_log
+        FROM `{TABLE_OPS_LOG}`
         ORDER BY processing_timestamp DESC
         LIMIT 500
-    """, conn)
-    conn.close()
-    return df
+    """)

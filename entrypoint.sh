@@ -4,7 +4,7 @@
 mkdir -p /app/.streamlit
 
 cat > /app/.streamlit/secrets.toml <<EOF
-demo_mode = ${DEMO_MODE:-true}
+demo_mode = ${DEMO_MODE:-false}
 
 [google_oauth]
 client_id = "${GOOGLE_OAUTH_CLIENT_ID:-}"
