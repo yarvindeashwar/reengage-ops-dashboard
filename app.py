@@ -16,7 +16,7 @@ seed_demo_if_empty()
 from auth import login_page, is_lead, logout
 from data_loaders import load_reviews, load_response_configs
 from tabs import (
-    my_queue, all_reviews, scoreboard, chain_health,
+    my_queue, all_reviews, chain_health,
     response_config, ops_log, manage_users, lead_overview, search_review,
 )
 
@@ -47,13 +47,18 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**Quick stats**")
-    if not df_all.empty:
-        pending_count  = int((df_all["status"] == "PENDING").sum())
-        critical_count = int(((df_all["priority"] == "CRITICAL") & (df_all["status"] == "PENDING")).sum())
-        responded      = int((df_all["status"] == "RESPONDED").sum())
-        has_response   = int(df_all["response_text"].notna().sum())
-        auto_posted    = int(df_all["is_replied"].sum()) if "is_replied" in df_all.columns else 0
-        st.metric("Total reviews", f"{len(df_all):,}")
+
+    # Chain filter for sidebar stats
+    sidebar_chain = st.selectbox("Filter by chain", ["All"] + chains, key="sidebar_chain")
+    df_stats = df_all if sidebar_chain == "All" else df_all[df_all["chain_name"] == sidebar_chain]
+
+    if not df_stats.empty:
+        pending_count  = int((df_stats["status"] == "PENDING").sum())
+        critical_count = int(((df_stats["priority"] == "CRITICAL") & (df_stats["status"] == "PENDING")).sum())
+        responded      = int((df_stats["status"] == "RESPONDED").sum())
+        has_response   = int(df_stats["response_text"].notna().sum())
+        auto_posted    = int(df_stats["is_replied"].sum()) if "is_replied" in df_stats.columns else 0
+        st.metric("Total reviews", f"{len(df_stats):,}")
         st.metric("Pending", f"{pending_count:,}")
         st.metric("🔴 Critical & pending", critical_count)
         st.metric("✅ Responded", f"{responded:,}")
@@ -70,10 +75,8 @@ with st.sidebar:
         st.rerun()
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
-# Operators: My Queue, All Reviews, Scoreboard, Chain Health, Response Config, Ops Log
-# Leads: + Operator Assignments, Manage Users
 operator_tabs = [
-    "📥 My Queue", "🗂 All Reviews", "🏆 Scoreboard", "🏥 Chain Health",
+    "📥 My Queue", "🗂 All Reviews", "🏥 Chain Health",
     "🤖 Response Config", "📋 Ops Log",
 ]
 lead_tabs = ["🔍 Search Review", "📊 Operator Assignments", "👥 Manage Users"]
@@ -88,54 +91,24 @@ with tabs[1]:
     all_reviews.render(df_all, chains, platforms)
 
 with tabs[2]:
-    scoreboard.render(df_all)
-
-with tabs[3]:
     chain_health.render(df_all)
 
-with tabs[4]:
+with tabs[3]:
     response_config.render(rc_df)
 
-with tabs[5]:
+with tabs[4]:
     ops_log.render()
 
 if is_lead(user_role):
-    with tabs[6]:
+    with tabs[5]:
         search_review.render(df_all)
 
-    with tabs[7]:
+    with tabs[6]:
         lead_overview.render(df_all)
 
-    with tabs[8]:
+    with tabs[7]:
         manage_users.render(user_email)
 
 # ── Footer ───────────────────────────────────────────────────────────────────
 st.divider()
-col_f1, col_f2 = st.columns(2)
-with col_f1:
-    st.caption(f"Live BQ data · {len(df_all):,} reviews across {len(chains)} chains · "
-               f"UberEats auto-post ready · DoorDash copy+paste")
-with col_f2:
-    if st.session_state.post_log:
-        st.caption(f"📊 {len(st.session_state.post_log)} UE auto-posts this session")
-
-with st.expander("ℹ️ How response automation works", expanded=False):
-    st.markdown("""
-**Platform capabilities:**
-
-| Platform | Auto-post | Coupon | Method |
-|----------|-----------|--------|--------|
-| **UberEats** | ✅ Yes | ✅ Yes | GraphQL `submitEaterReviewReply` — one-click from dashboard |
-| **DoorDash** | ❌ No API | ❌ Manual | Copy AI response → Open portal → Paste |
-
-**Response generation:**
-1. Config matching — review matched to best config by chain, platform, rating, customer type
-2. AI mode — sends review + tonality to LLM, generates personalized response
-3. Template mode — picks template, replaces variables. If paraphrase=True, varies wording
-
-**Assignment engine** (runs daily at 8 AM):
-- Distributes pending reviews equally across operators
-- Minimises chain×platform combos per operator (fewer 3P logins)
-- New operators get reduced share (configurable %) — surplus goes to others
-- Leads can trigger manually from Manage Users tab
-    """)
+st.caption(f"Live BQ data · {len(df_all):,} reviews across {len(chains)} chains")

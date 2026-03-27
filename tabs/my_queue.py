@@ -99,21 +99,19 @@ def render(df_all, user_email):
         },
     )
 
-    # ── Inline mark responded ──
+    # ── Copy AI response + Mark responded ──
     st.divider()
-    st.markdown("**Mark a review as responded**")
-
-    options = []
-    for _, r in df_show.iterrows():
-        icon = PRIORITY_ICON.get(r["priority"], "")
-        resp_tag = "🤖" if pd.notna(r.get("response_text")) else "❌"
-        label = (f"{icon} {r['chain_name']} · {r['platform']} · "
-                 f"{r['rating_display']} · {r['days_left']}d · "
-                 f"{r['customer_name'] or '—'} · {r['order_id'] or ''} {resp_tag}")
-        options.append(label)
-
     c1, c2 = st.columns([3, 1])
     with c1:
+        options = []
+        for _, r in df_show.iterrows():
+            icon = PRIORITY_ICON.get(r["priority"], "")
+            resp_tag = "🤖" if pd.notna(r.get("response_text")) else "❌"
+            label = (f"{icon} {r['chain_name']} · {r['platform']} · "
+                     f"{r['rating_display']} · {r['days_left']}d · "
+                     f"{r['customer_name'] or '—'} · {r['order_id'] or ''} {resp_tag}")
+            options.append(label)
+
         selected_idx = st.selectbox("Select review", range(len(options)),
                                     format_func=lambda i: options[i], key="mq_select")
     with c2:
@@ -122,11 +120,15 @@ def render(df_all, user_email):
     r = df_show.iloc[selected_idx]
     uid = r["review_uid"]
     asgn_id = r.get("assignment_id", "")
-
-    # Show response preview if it exists
     resp = r.get("response_text") or ""
+
+    # Copy button + response preview
     if resp:
-        st.code(resp, language=None)
+        b1, b2 = st.columns([1, 4])
+        with b1:
+            st.code(f"📋 Copy", language=None)
+        with b2:
+            st.code(resp, language=None)
     if r.get("portal_link"):
         st.link_button("📋 Open portal", r["portal_link"])
 
