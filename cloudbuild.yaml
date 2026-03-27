@@ -3,21 +3,21 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
       - '.'
 
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
-      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
 
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: 'gcloud'
     args:
       - 'run'
       - 'deploy'
-      - 'reengage-ops-dashboard'
-      - '--image=us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+      - 'reengage-ops-dashboard-v2'
+      - '--image=us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
       - '--memory=2048Mi'
@@ -29,4 +29,4 @@ steps:
       - '--set-env-vars=DB_HOST=/cloudsql/arboreal-vision-339901:us-central1:mysqladmin,DB_USER=loop,DB_PASSWORD=password,DB_NAME=loop_core'
 
 images:
-  - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
