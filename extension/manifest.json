@@ -1,0 +1,44 @@
+{
+  "manifest_version": 3,
+  "name": "ReEngage Response Copier",
+  "version": "2.0.0",
+  "description": "Fetches AI-generated review responses from ReEngage and copies them to clipboard on DoorDash and UberEats merchant portals.",
+  "permissions": [
+    "webRequest",
+    "webNavigation",
+    "clipboardWrite",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://merchants.doordash.com/*",
+    "*://www.doordash.com/*",
+    "*://api.segment.io/*",
+    "*://api.segment.com/*",
+    "*://merchants.ubereats.com/*",
+    "*://script.google.com/*",
+    "*://script.googleusercontent.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://merchants.doordash.com/*",
+        "*://www.doordash.com/merchant/*",
+        "*://merchants.ubereats.com/*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ReEngage Response Copier"
+  },
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

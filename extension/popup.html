@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      padding: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      color: #1f2937;
+    }
+    h2 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #ef4444;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 4px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    input[type="text"], input[type="email"] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+    input[type="text"]:focus, input[type="email"]:focus {
+      outline: none;
+      border-color: #ef4444;
+      box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
+    }
+    button {
+      width: 100%;
+      padding: 8px;
+      background: #ef4444;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #dc2626; }
+    .status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      text-align: center;
+    }
+    .status.ok { background: #f0fdf4; color: #166534; }
+    .status.warn { background: #fffbeb; color: #92400e; }
+    .status.error { background: #fef2f2; color: #991b1b; }
+    .info {
+      margin-top: 12px;
+      padding: 8px;
+      background: #f8fafc;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #6b7280;
+      line-height: 1.4;
+    }
+    .info strong { color: #374151; }
+    .divider {
+      height: 1px;
+      background: #e5e7eb;
+      margin: 12px 0;
+    }
+    .operator-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      background: #ede9fe;
+      color: #6d28d9;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>ReEngage Response Copier</h2>
+
+  <div id="operator-display" class="operator-badge" style="display:none;"></div>
+
+  <label>Operator Email</label>
+  <input type="email" id="operator-email" placeholder="your.name@company.com" />
+
+  <div class="divider"></div>
+
+  <label>Apps Script API Endpoint</label>
+  <input type="text" id="endpoint" placeholder="https://script.google.com/macros/s/.../exec" />
+  <button id="save">Save</button>
+
+  <div id="status" class="status" style="display:none;"></div>
+
+  <div class="info">
+    <strong>How it works:</strong><br>
+    1. Navigate to DoorDash or UberEats Merchant Portal<br>
+    2. Open a review to respond<br>
+    3. The extension captures the order ID<br>
+    4. Click "Copy Response" or "Paste into Box"<br>
+    5. After posting, click "Mark as Responded" to log it
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
