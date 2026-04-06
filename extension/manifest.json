@@ -7,7 +7,8 @@
     "webRequest",
     "webNavigation",
     "clipboardWrite",
-    "storage"
+    "storage",
+    "identity"
   ],
   "host_permissions": [
     "*://merchants.doordash.com/*",
@@ -15,8 +16,12 @@
     "*://api.segment.io/*",
     "*://api.segment.com/*",
     "*://merchants.ubereats.com/*",
-    "*://script.google.com/*",
-    "*://script.googleusercontent.com/*"
+    "*://reengage-ops-dashboard-v2-ul5ne76yva-uc.a.run.app/*",
+    "*://localhost/*",
+    "*://*.ngrok.io/*",
+    "*://*.ngrok-free.app/*",
+    "*://*.ngrok-free.dev/*",
+    "*://*.ngrok.app/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -1,53 +1,56 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const endpointInput = document.getElementById("endpoint");
-  const operatorInput = document.getElementById("operator-email");
-  const operatorDisplay = document.getElementById("operator-display");
+  const accountRow = document.getElementById("account-row");
+  const accountDot = document.getElementById("account-dot");
+  const accountEmail = document.getElementById("account-email");
+  const manualEmailSection = document.getElementById("manual-email-section");
+  const manualEmailInput = document.getElementById("manual-email");
+  const apiBaseInput = document.getElementById("api-base");
   const saveBtn = document.getElementById("save");
-  const statusDiv = document.getElementById("status");
+  const savedMsg = document.getElementById("saved-msg");
 
   // Load saved settings
-  chrome.storage.sync.get(["apiEndpoint", "operatorEmail"], (result) => {
-    if (result.apiEndpoint) {
-      endpointInput.value = result.apiEndpoint;
+  chrome.storage.sync.get(["apiBase", "operatorEmail"], (result) => {
+    if (result.apiBase) {
+      apiBaseInput.value = result.apiBase;
+      document.getElementById("dev-section").open = true;
     }
     if (result.operatorEmail) {
-      operatorInput.value = result.operatorEmail;
-      operatorDisplay.textContent = result.operatorEmail;
-      operatorDisplay.style.display = "inline-block";
+      manualEmailInput.value = result.operatorEmail;
     }
+  });
 
-    if (result.apiEndpoint && result.operatorEmail) {
-      showStatus("ok", "Connected");
-    } else if (!result.operatorEmail) {
-      showStatus("warn", "Please enter your operator email");
+  // Try auto-detect from Chrome profile
+  chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }, (info) => {
+    if (info && info.email) {
+      accountEmail.textContent = info.email;
+      accountEmail.classList.remove("warn");
+      accountDot.classList.remove("warn");
+      accountRow.classList.remove("warn");
+      // Save auto-detected email
+      chrome.storage.sync.set({ operatorEmail: info.email });
     } else {
-      showStatus("warn", "API endpoint not configured");
+      // Show manual fallback
+      accountEmail.textContent = "Auto-detect failed — enter email below";
+      manualEmailSection.style.display = "block";
     }
   });
 
   saveBtn.addEventListener("click", () => {
-    const endpoint = endpointInput.value.trim();
-    const email = operatorInput.value.trim();
+    const apiBase = apiBaseInput.value.trim();
+    const manualEmail = manualEmailInput.value.trim();
 
-    if (!email) {
-      showStatus("warn", "Please enter your operator email");
-      return;
-    }
-    if (!endpoint) {
-      showStatus("warn", "Please enter an endpoint URL");
-      return;
-    }
+    const toSave = { apiBase: apiBase || "" };
+    if (manualEmail) toSave.operatorEmail = manualEmail;
 
-    chrome.storage.sync.set({ apiEndpoint: endpoint, operatorEmail: email }, () => {
-      operatorDisplay.textContent = email;
-      operatorDisplay.style.display = "inline-block";
-      showStatus("ok", "Saved!");
+    chrome.storage.sync.set(toSave, () => {
+      if (manualEmail) {
+        accountEmail.textContent = manualEmail;
+        accountEmail.classList.remove("warn");
+        accountDot.classList.remove("warn");
+        accountRow.classList.remove("warn");
+      }
+      savedMsg.style.display = "block";
+      setTimeout(() => { savedMsg.style.display = "none"; }, 2000);
     });
   });
-
-  function showStatus(type, message) {
-    statusDiv.style.display = "block";
-    statusDiv.className = `status ${type}`;
-    statusDiv.textContent = message;
-  }
 });

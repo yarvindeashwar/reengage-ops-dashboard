@@ -92,11 +92,20 @@ def load_reviews() -> pd.DataFrame:
         LEFT JOIN `{TABLE_REVIEW_RESPONSES}` rr ON w.order_id = rr.order_id
     ),
 
+    with_assignment AS (
+        SELECT w.*,
+            a.status AS assignment_status
+        FROM with_response w
+        LEFT JOIN `{TABLE_ASSIGNMENTS}` a
+            ON w.review_uid = a.review_uid AND a.status = 'completed'
+    ),
+
     with_status AS (
         SELECT *,
             CASE
                 WHEN is_replied = TRUE THEN 'RESPONDED'
                 WHEN response_sent IS NOT NULL THEN 'RESPONDED'
+                WHEN assignment_status = 'completed' THEN 'RESPONDED'
                 WHEN days_left <= 0 THEN 'EXPIRED'
                 ELSE 'PENDING'
             END AS status,
@@ -130,7 +139,7 @@ def load_reviews() -> pd.DataFrame:
                     CONCAT('https://www.doordash.com/merchant/feedback?store_id=', store_id)
                 ELSE ''
             END AS portal_link
-        FROM with_response
+        FROM with_assignment
     )
 
     SELECT

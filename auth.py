@@ -17,9 +17,18 @@ from urllib.parse import urlencode
 import pandas as pd
 import requests
 import streamlit as st
+import extra_streamlit_components as stx
 
 from config import ROLE_LEAD, TABLE_USERS
 from db import bq_read, bq_exec
+
+COOKIE_NAME = "reengage_session"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
+
+@st.cache_resource
+def _cookie_manager():
+    return stx.CookieManager()
 
 GOOGLE_AUTH_URL     = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL    = "https://oauth2.googleapis.com/token"
@@ -84,6 +93,37 @@ def _is_demo_mode() -> bool:
     return st.secrets.get("demo_mode", False)
 
 
+def _restore_session_from_cookie() -> bool:
+    """Try to restore session from browser cookie. Returns True if successful."""
+    try:
+        cookie_mgr = _cookie_manager()
+        token = cookie_mgr.get(COOKIE_NAME)
+        if not token or "|" not in token:
+            return False
+        parts = token.split("|", 2)
+        if len(parts) != 3:
+            return False
+        email, role, name = parts
+        # Validate email is still approved in BQ
+        user = get_user(email)
+        if not user or not user.get("approved"):
+            return False
+        st.session_state["auth_email"] = email
+        st.session_state["auth_name"]  = name
+        st.session_state["auth_role"]  = role
+        return True
+    except Exception:
+        return False
+
+
+def _set_session_cookie(email: str, role: str, name: str):
+    try:
+        cookie_mgr = _cookie_manager()
+        cookie_mgr.set(COOKIE_NAME, f"{email}|{role}|{name}", max_age=COOKIE_MAX_AGE)
+    except Exception:
+        pass
+
+
 def login_page():
     if st.session_state.get("auth_email"):
         return (
@@ -94,6 +134,14 @@ def login_page():
 
     if _is_demo_mode():
         return _demo_login()
+
+    # Try restoring from persistent browser cookie
+    if _restore_session_from_cookie():
+        return (
+            st.session_state["auth_email"],
+            st.session_state.get("auth_name", st.session_state["auth_email"]),
+            st.session_state.get("auth_role", ""),
+        )
 
     config = _get_oauth_config()
     code = st.query_params.get("code")
@@ -118,9 +166,21 @@ def login_page():
                 st.caption(f"Signed in as: {email}")
                 st.stop()
 
+            # Backfill name in BQ if it was manually added without one
+            if not user.get("name"):
+                sn = _safe(name)
+                se = _safe(email)
+                now = _now()
+                bq_exec(f"""
+                    UPDATE `{TABLE_USERS}`
+                    SET name = '{sn}', updated_at = TIMESTAMP('{now}')
+                    WHERE email = '{se}'
+                """)
+
             st.session_state["auth_email"] = email
             st.session_state["auth_name"]  = name
             st.session_state["auth_role"]  = user["role"]
+            _set_session_cookie(email, user["role"], name)
             st.rerun()
         else:
             st.error("Login failed. Please try again.")
@@ -160,6 +220,10 @@ def _demo_login():
 def logout():
     for key in ["auth_email", "auth_name", "auth_role"]:
         st.session_state.pop(key, None)
+    try:
+        _cookie_manager().delete(COOKIE_NAME)
+    except Exception:
+        pass
 
 
 # ── User CRUD (BigQuery) ────────────────────────────────────────────────────

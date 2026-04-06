@@ -2,8 +2,11 @@
  * Background Service Worker
  * Intercepts Segment analytics POSTs to extract delivery_uuid from DoorDash events.
  * Parses UberEats review page URLs to extract workflowUUID.
- * Proxies API calls and mark-responded actions.
+ * Proxies API calls to the ReEngage Cloud Run backend.
  */
+
+// Default API base — can be overridden in popup for local/ngrok testing
+const DEFAULT_API_BASE = "https://reengage-ops-dashboard-v2-ul5ne76yva-uc.a.run.app";
 
 // ── DoorDash: Listen for Segment tracking calls ──
 chrome.webRequest.onBeforeRequest.addListener(
@@ -30,7 +33,6 @@ function handleSegmentRequest(details) {
     const bodyText = raw.map(part => decoder.decode(part.bytes)).join("");
     const payload = JSON.parse(bodyText);
 
-    // Segment batch format or single event
     const events = payload.batch || [payload];
 
     for (const event of events) {
@@ -46,7 +48,7 @@ function handleSegmentRequest(details) {
       }
     }
   } catch (e) {
-    // Silently ignore parse errors (not all requests are JSON)
+    // Silently ignore parse errors
   }
 }
 
@@ -60,14 +62,11 @@ chrome.webNavigation.onCompleted.addListener((details) => {
       console.log("[ReEngage] Captured UberEats workflowUUID:", workflowUUID);
       storeAndNotify(details.tabId, workflowUUID, "ubereats_review_page", {});
     }
-  } catch (e) {
-    // Ignore invalid URLs
-  }
+  } catch (e) {}
 }, { url: [{ hostContains: "merchants.ubereats.com" }] });
 
-// Also capture when navigating within UberEats SPA (hash/history changes)
 chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
-  if (details.frameId !== 0) return; // main frame only
+  if (details.frameId !== 0) return;
   try {
     const url = new URL(details.url);
     const match = url.pathname.match(/\/feedback\/reviews\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
@@ -76,9 +75,7 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
       console.log("[ReEngage] Captured UberEats workflowUUID (SPA nav):", workflowUUID);
       storeAndNotify(details.tabId, workflowUUID, "ubereats_review_page_spa", {});
     }
-  } catch (e) {
-    // Ignore invalid URLs
-  }
+  } catch (e) {}
 }, { url: [{ hostContains: "merchants.ubereats.com" }] });
 
 // ── Shared: Store UUID and notify content script ──
@@ -99,68 +96,103 @@ function storeAndNotify(tabId, uuid, eventName, extra) {
   chrome.tabs.sendMessage(tabId, {
     type: "DELIVERY_UUID_CAPTURED",
     ...data
-  }).catch(() => {
-    // Content script may not be ready yet, that's OK - it'll read from storage
-  });
+  }).catch(() => {});
 }
 
-// Clean up old tab data when tabs close
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(`tab_${tabId}`);
 });
 
-// Handle messages from content script
+// ── Get operator email — Chrome profile first, stored email as fallback ──
+function getOperatorEmail() {
+  return new Promise((resolve) => {
+    chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }, (info) => {
+      if (info && info.email) {
+        resolve(info.email);
+      } else {
+        // Fallback: manually entered email from popup
+        chrome.storage.sync.get("operatorEmail", (result) => {
+          resolve(result.operatorEmail || "");
+        });
+      }
+    });
+  });
+}
+
+// ── Get API base URL (allows override for ngrok testing) ──
+function getApiBase() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get("apiBase", (result) => {
+      resolve(result.apiBase || DEFAULT_API_BASE);
+    });
+  });
+}
+
+// ── Message handler ──
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_DELIVERY_UUID" && sender.tab) {
     const storageKey = `tab_${sender.tab.id}`;
     chrome.storage.session.get(storageKey, (result) => {
       sendResponse(result[storageKey] || null);
     });
-    return true; // async response
-  }
-
-  if (message.type === "GET_API_ENDPOINT") {
-    chrome.storage.sync.get("apiEndpoint", (result) => {
-      sendResponse(result.apiEndpoint || "");
-    });
     return true;
   }
 
   if (message.type === "GET_OPERATOR_EMAIL") {
-    chrome.storage.sync.get("operatorEmail", (result) => {
-      sendResponse(result.operatorEmail || "");
+    getOperatorEmail().then(sendResponse);
+    return true;
+  }
+
+  if (message.type === "GET_API_BASE") {
+    getApiBase().then(sendResponse);
+    return true;
+  }
+
+  // Lookup AI response from Cloud Run
+  if (message.type === "FETCH_RESPONSE") {
+    const { orderId } = message;
+    Promise.all([getApiBase(), getOperatorEmail()]).then(([apiBase, email]) => {
+      const url = `${apiBase}/api/extension/lookup?order_id=${encodeURIComponent(orderId)}`;
+      fetch(url, {
+        headers: {
+          "X-Operator-Email": email,
+          "ngrok-skip-browser-warning": "true"
+        }
+      })
+        .then(resp => resp.json().then(data => ({ ok: resp.ok, status: resp.status, data })))
+        .then(({ ok, status, data }) => {
+          if (!ok) {
+            sendResponse({ success: false, error: data.detail || `HTTP ${status}` });
+          } else {
+            sendResponse({ success: true, data });
+          }
+        })
+        .catch(err => sendResponse({ success: false, error: err.message }));
     });
     return true;
   }
 
-  // Proxy API calls through background to avoid page CSP restrictions
-  if (message.type === "FETCH_RESPONSE") {
-    const { apiEndpoint, orderId } = message;
-    const url = `${apiEndpoint}?order_id=${encodeURIComponent(orderId)}`;
-    fetch(url)
-      .then(resp => resp.json())
-      .then(data => sendResponse({ success: true, data }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
-    return true; // async response
-  }
-
-  // Mark responded via Apps Script POST
+  // Mark responded on Cloud Run
   if (message.type === "MARK_RESPONDED") {
-    const { apiEndpoint, orderId, platform, operatorEmail, chainName } = message;
-    fetch(apiEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        action: "mark_responded",
-        order_id: orderId,
-        platform: platform,
-        operator_email: operatorEmail,
-        chain_name: chainName || ""
+    const { orderId, platform, chainName } = message;
+    Promise.all([getApiBase(), getOperatorEmail()]).then(([apiBase, email]) => {
+      fetch(`${apiBase}/api/extension/mark-responded`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Operator-Email": email,
+          "ngrok-skip-browser-warning": "true"
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          platform: platform,
+          chain_name: chainName || ""
+        })
       })
-    })
-      .then(resp => resp.json())
-      .then(data => sendResponse({ success: true, data }))
-      .catch(err => sendResponse({ success: false, error: err.message }));
+        .then(resp => resp.json())
+        .then(data => sendResponse({ success: true, data }))
+        .catch(err => sendResponse({ success: false, error: err.message }));
+    });
     return true;
   }
 });

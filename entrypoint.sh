@@ -24,7 +24,14 @@ password = "${DB_PASSWORD:-password}"
 database = "${DB_NAME:-loop_core}"
 EOF
 
+# Start nginx (routes :8080 → Streamlit :8501 and FastAPI :8001)
+nginx
+
+# Start FastAPI extension API
+uvicorn extension_api:app --host 0.0.0.0 --port 8001 &
+
+# Start Streamlit (main process)
 exec streamlit run app.py \
-    --server.port=${PORT:-8080} \
+    --server.port=8501 \
     --server.address=0.0.0.0 \
     --server.headless=true

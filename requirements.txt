@@ -1,4 +1,5 @@
 streamlit>=1.30.0
+extra-streamlit-components>=0.1.60
 pandas
 google-cloud-bigquery
 google-auth
@@ -10,3 +11,6 @@ pyarrow
 openai
 sqlalchemy
 psycopg2-binary
+fastapi
+uvicorn[standard]
+httpx

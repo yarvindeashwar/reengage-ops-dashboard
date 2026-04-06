@@ -13,14 +13,12 @@
 
   let currentDeliveryUuid = null;
   let injectedForUuid = null; // prevent duplicate injection
-  let apiEndpoint = "";
   let operatorEmail = "";
   let injectInProgress = false; // prevent concurrent API calls
 
-  // Load settings from storage
-  chrome.storage.sync.get(["apiEndpoint", "operatorEmail"], (result) => {
-    apiEndpoint = result.apiEndpoint || "";
-    operatorEmail = result.operatorEmail || "";
+  // Auto-detect operator email from Chrome profile
+  chrome.runtime.sendMessage({ type: "GET_OPERATOR_EMAIL" }, (email) => {
+    operatorEmail = email || "";
   });
 
   // Listen for delivery_uuid / workflowUUID from background script
@@ -147,27 +145,15 @@
         return;
       }
 
-      // Get API endpoint and operator email
-      if (!apiEndpoint) {
-        const result = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ type: "GET_API_ENDPOINT" }, resolve);
-        });
-        apiEndpoint = result || "";
-      }
+      // Get operator email (auto-detected from Chrome profile via background)
       if (!operatorEmail) {
-        const result = await new Promise((resolve) => {
+        operatorEmail = await new Promise((resolve) => {
           chrome.runtime.sendMessage({ type: "GET_OPERATOR_EMAIL" }, resolve);
-        });
-        operatorEmail = result || "";
-      }
-
-      if (!apiEndpoint) {
-        injectStatusBadge(textarea, "error", "API endpoint not configured. Set it in the extension popup.");
-        return;
+        }) || "";
       }
 
       if (!operatorEmail) {
-        injectStatusBadge(textarea, "error", "Operator email not configured. Set it in the extension popup.");
+        injectStatusBadge(textarea, "error", "Not signed into Chrome. Sign in with your loopai.com account.");
         return;
       }
 
@@ -180,7 +166,6 @@
       const result = await new Promise((resolve) => {
         chrome.runtime.sendMessage({
           type: "FETCH_RESPONSE",
-          apiEndpoint,
           orderId: currentDeliveryUuid
         }, resolve);
       });
@@ -320,10 +305,8 @@
         const result = await new Promise((resolve) => {
           chrome.runtime.sendMessage({
             type: "MARK_RESPONDED",
-            apiEndpoint,
             orderId: currentDeliveryUuid,
             platform: platformName,
-            operatorEmail: operatorEmail,
             chainName: data.slug || ""
           }, resolve);
         });
