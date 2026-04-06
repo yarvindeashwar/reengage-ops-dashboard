@@ -75,12 +75,9 @@ def bq_exec(sql: str):
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def validate_operator(email: str) -> str:
-    """Check email is non-empty, loopai.com domain, and approved in users table."""
+    """Check email is non-empty and approved in users table."""
     if not email or "@" not in email:
         raise HTTPException(status_code=401, detail="Missing operator email")
-
-    if not email.endswith("@loopai.com"):
-        raise HTTPException(status_code=403, detail="Not a loopai.com account")
 
     safe = email.replace("'", "''")
     rows = bq_read(f"""
