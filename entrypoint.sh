@@ -24,14 +24,30 @@ password = "${DB_PASSWORD:-password}"
 database = "${DB_NAME:-loop_core}"
 EOF
 
-# Start nginx (routes :8080 → Streamlit :8501 and FastAPI :8001)
-nginx
-
-# Start FastAPI extension API
+# Start FastAPI extension API in background
 uvicorn extension_api:app --host 0.0.0.0 --port 8001 &
 
-# Start Streamlit (main process)
-exec streamlit run app.py \
+# Start Streamlit in background
+streamlit run app.py \
     --server.port=8501 \
     --server.address=0.0.0.0 \
-    --server.headless=true
+    --server.headless=true &
+STREAMLIT_PID=$!
+
+# Wait for Streamlit to be ready before starting nginx
+for i in $(seq 1 60); do
+    if curl -sf http://localhost:8501/_stcore/health > /dev/null 2>&1; then
+        echo "Streamlit is ready"
+        break
+    fi
+    sleep 1
+done
+
+# Start nginx in foreground (Cloud Run main process)
+nginx -g 'daemon off;' &
+NGINX_PID=$!
+
+# If Streamlit dies, exit so Cloud Run restarts the container
+wait $STREAMLIT_PID
+kill $NGINX_PID 2>/dev/null
+exit 1
