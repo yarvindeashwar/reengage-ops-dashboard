@@ -7,6 +7,13 @@ from config import PRIORITY_ICON, STATUS_ICON
 from data_loaders import load_assignments, load_ops_log
 
 
+def _v(val, default="—"):
+    """Safe value display — handles pandas NA/NaN/None."""
+    if pd.isna(val):
+        return default
+    return val
+
+
 def render(df_all):
     st.subheader("Search Reviews")
     st.caption("Look up a specific review by its unique identifier.")
@@ -129,10 +136,10 @@ def render(df_all):
 
         with col2:
             st.markdown("**Customer**")
-            st.markdown(f"- **Name:** {r['customer_name'] or '—'}")
-            st.markdown(f"- **ID:** `{r.get('customer_id') or '—'}`")
-            st.markdown(f"- **Type:** {r['customer_type']}")
-            st.markdown(f"- **Orders:** {r.get('orders_count') or '—'}")
+            st.markdown(f"- **Name:** {_v(r['customer_name'])}")
+            st.markdown(f"- **ID:** `{_v(r.get('customer_id'))}`")
+            st.markdown(f"- **Type:** {_v(r['customer_type'])}")
+            st.markdown(f"- **Orders:** {_v(r.get('orders_count'))}")
             if pd.notna(r.get("order_value")):
                 st.markdown(f"- **Order value:** ${r['order_value']:.2f}")
             if r.get("items"):
@@ -140,8 +147,8 @@ def render(df_all):
             st.markdown("")
             st.markdown("**Rating**")
             st.markdown(f"- **Display:** {r['rating_display']}")
-            st.markdown(f"- **Raw value:** `{r.get('rating_value') or r.get('star_rating') or '—'}`")
-            st.markdown(f"- **Type:** {r.get('rating_type') or '—'}")
+            st.markdown(f"- **Raw value:** `{_v(r.get('rating_value'), _v(r.get('star_rating')))}`")
+            st.markdown(f"- **Type:** {_v(r.get('rating_type'))}")
 
         with col3:
             st.markdown("**Assignment**")
