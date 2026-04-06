@@ -34,10 +34,14 @@ streamlit run app.py \
     --server.headless=true &
 STREAMLIT_PID=$!
 
-# Wait for Streamlit to be ready before starting nginx
+# Wait for BOTH Streamlit and FastAPI to be ready before starting nginx
 for i in $(seq 1 60); do
-    if curl -sf http://localhost:8501/_stcore/health > /dev/null 2>&1; then
-        echo "Streamlit is ready"
+    STREAMLIT_OK=false
+    FASTAPI_OK=false
+    curl -sf http://localhost:8501/_stcore/health > /dev/null 2>&1 && STREAMLIT_OK=true
+    curl -sf http://localhost:8001/api/extension/health > /dev/null 2>&1 && FASTAPI_OK=true
+    if $STREAMLIT_OK && $FASTAPI_OK; then
+        echo "All services ready"
         break
     fi
     sleep 1
