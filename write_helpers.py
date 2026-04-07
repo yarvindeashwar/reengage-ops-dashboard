@@ -138,12 +138,17 @@ def redistribute_assignments(removed_email: str):
             op_counts[target] += 1
             op_combos[target].add((chain, plat))
 
-    # Batch update
-    for aid, target in updates:
+    # Batch update in a single DML statement
+    if updates:
+        cases = " ".join(
+            f"WHEN '{_safe(aid)}' THEN '{_safe(target)}'" for aid, target in updates
+        )
+        aid_list = ", ".join(f"'{_safe(aid)}'" for aid, _ in updates)
         bq_exec(f"""
         UPDATE `{TABLE_ASSIGNMENTS}`
-        SET operator_email = '{_safe(target)}', assigned_at = TIMESTAMP('{now}')
-        WHERE assignment_id = '{_safe(aid)}'
+        SET operator_email = CASE assignment_id {cases} END,
+            assigned_at = TIMESTAMP('{now}')
+        WHERE assignment_id IN ({aid_list})
         """)
 
     log_action(

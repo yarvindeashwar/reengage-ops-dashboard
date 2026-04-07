@@ -44,15 +44,16 @@ def _get_oauth_config():
     }
 
 
-def _build_auth_url(config):
+def _build_auth_url(config, force_picker=False):
     params = {
         "client_id":     config["client_id"],
         "redirect_uri":  config["redirect_uri"],
         "response_type": "code",
         "scope":         "openid email profile",
         "access_type":   "offline",
-        "prompt":        "select_account",
     }
+    if force_picker:
+        params["prompt"] = "select_account"
     return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
 
@@ -133,12 +134,23 @@ def login_page():
             st.session_state["auth_role"]  = user["role"]
             st.rerun()
         else:
-            st.error("Login failed. Please try again.")
+            st.query_params["auth_failed"] = "1"
+            st.rerun()
 
+    # Auto-redirect to Google OAuth (silent re-auth if already logged in)
+    auth_url = _build_auth_url(config)
+    if not st.query_params.get("auth_failed"):
+        st.markdown(f'<meta http-equiv="refresh" content="0;url={auth_url}">',
+                    unsafe_allow_html=True)
+        st.caption("Redirecting to sign in...")
+        st.stop()
+
+    # Fallback: show manual button if auto-redirect failed
     st.title("📬 ReEngage Ops Dashboard")
     st.markdown("---")
     st.subheader("Sign in to continue")
-    st.link_button("🔐 Sign in with Google", _build_auth_url(config), type="primary")
+    st.link_button("🔐 Sign in with Google", _build_auth_url(config, force_picker=True),
+                   type="primary")
     st.stop()
 
 
