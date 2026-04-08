@@ -96,7 +96,7 @@ def render(df_all):
     show_cols = [
         "priority", "status", "days_left", "chain_name", "platform",
         "customer_name", "rating_display", "review_text",
-        "response_text", "review_date", "portal_link",
+        "response_text", "review_date",
     ]
     disp = df_op[[c for c in show_cols if c in df_op.columns]].copy()
     disp["priority"] = disp["priority"].map(lambda x: f"{PRIORITY_ICON.get(x,'')} {x}")
@@ -105,7 +105,6 @@ def render(df_all):
     st.dataframe(
         disp.head(100), use_container_width=True, hide_index=True,
         column_config={
-            "portal_link":   st.column_config.LinkColumn("Portal"),
             "review_text":   st.column_config.TextColumn("Review", width="medium"),
             "response_text": st.column_config.TextColumn("AI Response", width="medium"),
         },

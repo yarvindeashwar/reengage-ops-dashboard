@@ -93,7 +93,7 @@ def render(df_all, user_email):
         "rating_display", "rating_value",
         "order_value", "items",
         "review_text", "response_text",
-        "review_date", "portal_link",
+        "review_date",
     ]
     table = df_show[[c for c in table_cols if c in df_show.columns]].copy()
     table.insert(0, "#", range(1, len(table) + 1))
@@ -109,7 +109,6 @@ def render(df_all, user_email):
             "review_text": st.column_config.TextColumn("Review", width="medium"),
             "response_text": st.column_config.TextColumn("AI Response", width="medium"),
             "items": st.column_config.TextColumn("Items", width="medium"),
-            "portal_link": st.column_config.LinkColumn("Portal"),
         },
     )
 
