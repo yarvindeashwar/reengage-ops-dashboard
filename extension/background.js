@@ -119,17 +119,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.session.remove(`tab_${tabId}`);
 });
 
-// ── Get operator email — Chrome profile first, stored email as fallback ──
+// ── Get operator email — only from verified Google OAuth ──
 function getOperatorEmail() {
   return new Promise((resolve) => {
-    chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }, (info) => {
-      if (info && info.email) {
-        resolve(info.email);
+    chrome.storage.sync.get(["operatorEmail", "emailVerified"], (result) => {
+      if (result.operatorEmail && result.emailVerified) {
+        resolve(result.operatorEmail);
       } else {
-        // Fallback: manually entered email from popup
-        chrome.storage.sync.get("operatorEmail", (result) => {
-          resolve(result.operatorEmail || "");
-        });
+        resolve("");
       }
     });
   });
