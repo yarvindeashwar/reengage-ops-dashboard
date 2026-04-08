@@ -28,7 +28,13 @@ def render(df_all, user_email):
 
     asgn_map = my_asgn.set_index("review_uid")["assignment_id"].to_dict()
     df_q["assignment_id"] = df_q["review_uid"].map(asgn_map)
-    df_q = df_q.sort_values("days_left", ascending=True).reset_index(drop=True)
+    # Sort: chain_name first, then DD before UE within each chain, then by days_left
+    platform_order = {"Doordash": 0, "UberEats": 1}
+    df_q["_plat_order"] = df_q["platform"].map(platform_order).fillna(2)
+    df_q = df_q.sort_values(
+        ["chain_name", "_plat_order", "days_left"],
+        ascending=[True, True, True]
+    ).drop(columns=["_plat_order"]).reset_index(drop=True)
 
     # ── Metrics ──
     pending = df_q[df_q["status"] == "PENDING"]
@@ -48,12 +54,20 @@ def render(df_all, user_email):
 
     # ── Filters ──
     st.divider()
-    c1, c2, c3 = st.columns(3)
-    f_priority = c1.selectbox("Priority", ["All", "CRITICAL", "URGENT", "NORMAL"], key="mq_pri")
-    f_status = c2.selectbox("Status", ["PENDING", "All", "RESPONDED", "EXPIRED"], key="mq_st")
-    f_has_resp = c3.selectbox("AI Response", ["All", "Has response", "No response"], key="mq_resp")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    chains = ["All"] + sorted(df_q["chain_name"].dropna().unique().tolist())
+    platforms = ["All"] + sorted(df_q["platform"].dropna().unique().tolist())
+    f_chain = c1.selectbox("Chain", chains, key="mq_chain")
+    f_platform = c2.selectbox("Platform", platforms, key="mq_plat")
+    f_priority = c3.selectbox("Priority", ["All", "CRITICAL", "URGENT", "NORMAL"], key="mq_pri")
+    f_status = c4.selectbox("Status", ["PENDING", "All", "RESPONDED", "EXPIRED"], key="mq_st")
+    f_has_resp = c5.selectbox("AI Response", ["All", "Has response", "No response"], key="mq_resp")
 
     df_show = df_q.copy()
+    if f_chain != "All":
+        df_show = df_show[df_show["chain_name"] == f_chain]
+    if f_platform != "All":
+        df_show = df_show[df_show["platform"] == f_platform]
     if f_priority != "All":
         df_show = df_show[df_show["priority"] == f_priority]
     if f_status != "All":

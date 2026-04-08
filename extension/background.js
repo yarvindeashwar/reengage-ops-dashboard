@@ -52,6 +52,22 @@ function handleSegmentRequest(details) {
   }
 }
 
+// ── Inject fetch interceptor into MAIN world on merchant portals ──
+chrome.webNavigation.onCommitted.addListener((details) => {
+  if (details.frameId !== 0) return;
+  chrome.scripting.executeScript({
+    target: { tabId: details.tabId },
+    files: ["interceptor.js"],
+    world: "MAIN",
+    injectImmediately: true
+  }).catch(() => {});
+}, {
+  url: [
+    { hostContains: "doordash.com" },
+    { hostContains: "ubereats.com" }
+  ]
+});
+
 // ── UberEats: Listen for review page navigation ──
 chrome.webNavigation.onCompleted.addListener((details) => {
   try {

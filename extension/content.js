@@ -15,6 +15,77 @@
   let injectedForUuid = null; // prevent duplicate injection
   let operatorEmail = "";
   let injectInProgress = false; // prevent concurrent API calls
+  let currentReviewData = null; // ReEngage response data for the current review
+  const autoMarkedOrders = new Set(); // prevent duplicate auto-marks
+
+  // ── Listen for platform response confirmations (from interceptor.js in MAIN world) ──
+  window.addEventListener("message", (event) => {
+    if (event.source !== window) return;
+
+    // Case 1: Reply was just submitted by the operator
+    if (event.data?.type === "REENGAGE_REPLY_SUBMITTED") {
+      if (!currentDeliveryUuid || !currentReviewData || autoMarkedOrders.has(currentDeliveryUuid)) return;
+      console.log(`[ReEngage] Reply submitted on ${event.data.platform} — auto-marking ${currentDeliveryUuid}`);
+      autoMarkedOrders.add(currentDeliveryUuid);
+      const platformName = event.data.platform === "ubereats" ? "UberEats" : "Doordash";
+      chrome.runtime.sendMessage({
+        type: "MARK_RESPONDED",
+        orderId: currentDeliveryUuid,
+        platform: platformName,
+        chainName: currentReviewData.slug || ""
+      }, (result) => {
+        if (result && result.success) {
+          console.log(`[ReEngage] Auto-marked ${currentDeliveryUuid} as responded`);
+          showToast("Response verified and logged!");
+        } else {
+          console.warn(`[ReEngage] Auto-mark failed:`, result?.error);
+        }
+      });
+      return;
+    }
+
+    // Case 2: Reviews list re-fetched with responded reviews
+    if (event.data?.type !== "REENGAGE_PLATFORM_RESPONDED") return;
+
+    const { platform: respPlatform, responded } = event.data;
+    if (!currentDeliveryUuid || !currentReviewData || autoMarkedOrders.has(currentDeliveryUuid)) return;
+
+    console.log(`[ReEngage] Intercepted ${responded.length} responded reviews from ${respPlatform}`);
+
+    let matched = false;
+    for (const r of responded) {
+      if (respPlatform === "doordash") {
+        if (r.deliveryUuid === currentDeliveryUuid || r.cxReviewId === currentDeliveryUuid) {
+          matched = true;
+          break;
+        }
+      } else if (respPlatform === "ubereats") {
+        if (r.workflowUUID === currentDeliveryUuid) {
+          matched = true;
+          break;
+        }
+      }
+    }
+
+    if (matched) {
+      console.log(`[ReEngage] Platform confirmed reply for ${currentDeliveryUuid} — auto-marking`);
+      autoMarkedOrders.add(currentDeliveryUuid);
+      const platformName = respPlatform === "ubereats" ? "UberEats" : "Doordash";
+      chrome.runtime.sendMessage({
+        type: "MARK_RESPONDED",
+        orderId: currentDeliveryUuid,
+        platform: platformName,
+        chainName: currentReviewData.slug || ""
+      }, (result) => {
+        if (result && result.success) {
+          console.log(`[ReEngage] Auto-marked ${currentDeliveryUuid} as responded`);
+          showToast("Response verified and logged!");
+        } else {
+          console.warn(`[ReEngage] Auto-mark failed:`, result?.error);
+        }
+      });
+    }
+  });
 
   // Auto-detect operator email from Chrome profile
   chrome.runtime.sendMessage({ type: "GET_OPERATOR_EMAIL" }, (email) => {
@@ -182,6 +253,7 @@
         return;
       }
 
+      currentReviewData = data; // track for auto-detection
       injectResponsePanel(textarea, data);
       injectedForUuid = currentDeliveryUuid;
     } catch (err) {
@@ -267,65 +339,12 @@
           copyBtn.classList.remove("reengage-copied");
         }, 2000);
       } catch (err) {
-        showToast("Clipboard failed - response pasted into textbox");
-        setTextareaValue(textarea, data.response_text);
+        showToast("Clipboard failed - please copy manually from the text above");
       }
     });
     btnRow.appendChild(copyBtn);
 
-    // Paste-into-box button
-    const pasteBtn = document.createElement("button");
-    pasteBtn.className = "reengage-paste-btn";
-    pasteBtn.textContent = "Paste into Box";
-    pasteBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      setTextareaValue(textarea, data.response_text);
-      showToast("Response pasted into textbox!");
-    });
-    btnRow.appendChild(pasteBtn);
-
     container.appendChild(btnRow);
-
-    // Mark as Responded button (separate row)
-    const markRow = document.createElement("div");
-    markRow.className = "reengage-mark-row";
-
-    const markBtn = document.createElement("button");
-    markBtn.className = "reengage-mark-btn";
-    markBtn.textContent = "Mark as Responded";
-    markBtn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      markBtn.disabled = true;
-      markBtn.textContent = "Logging...";
-
-      try {
-        const platformName = platform === "ubereats" ? "UberEats" : "Doordash";
-        const result = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({
-            type: "MARK_RESPONDED",
-            orderId: currentDeliveryUuid,
-            platform: platformName,
-            chainName: data.slug || ""
-          }, resolve);
-        });
-
-        if (result && result.success) {
-          markBtn.textContent = "Logged!";
-          markBtn.classList.add("reengage-mark-done");
-          showToast("Response logged in dashboard!");
-        } else {
-          throw new Error(result ? result.error : "No response");
-        }
-      } catch (err) {
-        markBtn.disabled = false;
-        markBtn.textContent = "Mark as Responded";
-        showToast(`Failed to log: ${err.message}`);
-      }
-    });
-    markRow.appendChild(markBtn);
-    container.appendChild(markRow);
 
     // Source badge + operator badge
     const footerRow = document.createElement("div");
@@ -377,16 +396,6 @@
     document.querySelectorAll(".reengage-btn-container").forEach((el) => el.remove());
   }
 
-  // ── Set textarea value (React-compatible) ──
-  function setTextareaValue(textarea, value) {
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype, "value"
-    ).set;
-    nativeInputValueSetter.call(textarea, value);
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    textarea.dispatchEvent(new Event("change", { bubbles: true }));
-  }
-
   // ── Toast notification ──
   function showToast(message) {
     const existing = document.querySelector(".reengage-toast");
@@ -424,6 +433,7 @@
           }
           currentDeliveryUuid = null;
           injectedForUuid = null;
+          currentReviewData = null;
         }
       }
     }
@@ -440,6 +450,7 @@
         if (match) {
           currentDeliveryUuid = match[1];
           injectedForUuid = null;
+          currentReviewData = null;
           removeExistingInjection();
           console.log("[ReEngage] UberEats URL changed, new UUID:", currentDeliveryUuid);
           setTimeout(tryInject, 500);
@@ -447,6 +458,7 @@
           // Navigated away from a review
           currentDeliveryUuid = null;
           injectedForUuid = null;
+          currentReviewData = null;
           removeExistingInjection();
         }
       }
