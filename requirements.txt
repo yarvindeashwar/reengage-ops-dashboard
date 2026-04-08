@@ -2,5 +2,14 @@ streamlit>=1.30.0
 pandas
 google-cloud-bigquery
 google-auth
+google-auth-oauthlib
+google-cloud-secret-manager
+requests
 db-dtypes
 pyarrow
+openai
+sqlalchemy
+psycopg2-binary
+fastapi
+uvicorn[standard]
+httpx

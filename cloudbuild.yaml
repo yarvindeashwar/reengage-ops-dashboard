@@ -1,0 +1,33 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'reengage-ops-dashboard-v2'
+      - '--image=us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--memory=2048Mi'
+      - '--min-instances=0'
+      - '--max-instances=3'
+      - '--timeout=3600'
+      - '--allow-unauthenticated'
+      - '--add-cloudsql-instances=arboreal-vision-339901:us-central1:mysqladmin'
+      - '--set-env-vars=DEMO_MODE=false,GOOGLE_OAUTH_REDIRECT_URI=https://reengage-ops-dashboard-v2-ul5ne76yva-uc.a.run.app,DB_HOST=/cloudsql/arboreal-vision-339901:us-central1:mysqladmin,DB_PORT=5432,DB_NAME=loop_core'
+      - '--set-secrets=GCP_REFRESH_TOKEN=reengage-v2-gcp-refresh-token:latest,GCP_CLIENT_ID=reengage-v2-gcp-client-id:latest,GCP_CLIENT_SECRET=reengage-v2-gcp-client-secret:latest,GOOGLE_OAUTH_CLIENT_ID=reengage-v2-google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=reengage-v2-google-oauth-client-secret:latest,DB_USER=reengage-v2-db-user:latest,DB_PASSWORD=reengage-v2-db-password:latest'
+
+images:
+  - 'us-central1-docker.pkg.dev/arboreal-vision-339901/docker-images-repo/reengage-ops-dashboard-v2:$COMMIT_SHA'
